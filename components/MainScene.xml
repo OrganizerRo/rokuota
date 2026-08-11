@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="MainScene" extends="Scene" initialFocus="contentGrid">
+
+  <children>
+    <LayoutGroup
+      id="listContainer"
+      translation="[100,80]"
+      layoutDirection="vert"
+      itemSpacings="[20]">
+
+      <Label
+        id="headerLabel"
+        text="My Videos"
+        font="font:LargeBoldSystemFont"
+        color="#FFFFFF" />
+
+      <MarkupGrid
+        id="contentGrid"
+        itemSize="[1600,120]"
+        itemSpacing="[0,10]"
+        numColumns="1"
+        numRows="7"
+        drawFocusFeedback="true"
+        vertFocusAnimationStyle="floatingFocus"
+        itemComponentName="VideoItemComponent" />
+    </LayoutGroup>
+
+    <Video
+      id="videoPlayer"
+      width="1920"
+      height="1080"
+      translation="[0,0]"
+      visible="false"
+      enableTrickPlay="true" />
+  </children>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.contentGrid = m.top.findNode("contentGrid")
+        m.listContainer = m.top.findNode("listContainer")
+        m.video = m.top.findNode("videoPlayer")
+
+        ' Build and set content node
+        m.contentGrid.content = buildContentList()
+        m.contentGrid.observeField("itemSelected", "onItemSelected")
+
+        ' Observe video state to exit playback on finish or error
+        m.video.observeField("state", "onVideoState")
+        m.contentGrid.setFocus(true)
+      end sub
+
+      function buildContentList() as object
+        listContent = createObject("roSGNode", "ContentNode")
+
+        ' 1. Positional syntax (Overload-style)
+        addItem(listContent, "Big Buck Bunny", "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4", "mp4", "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Big_buck_bunny_poster_big.jpg/220px-Big_buck_bunny_poster_big.jpg", "A comedic short film about a giant rabbit")
+
+        ' 2. Single Object / Associative Array syntax
+        addItemFromObject(listContent, {
+          title: "Sintel",
+          url: "https://myvideos.com/sintel.mkv",
+          streamFormat: "mkv",
+          thumbnail: "https://myvideos.com/thumbs/sintel.jpg",
+          description: "A girl searches for her lost dragon"
+        })
+
+        ' 3. Array of Objects syntax
+        addItems(listContent, [
+          {
+            title: "Tears of Steel",
+            url: "https://myvideos.com/tears/master.m3u8",
+            streamFormat: "hls",
+            thumbnail: "https://myvideos.com/thumbs/tears.jpg",
+            description: "Sci-fi short by Blender Foundation"
+          },
+          {
+            title: "Local News Clip",
+            url: "https://myvideos.com/news.mp4",
+            streamFormat: "mp4",
+            thumbnail: "https://myvideos.com/thumbs/news.jpg",
+            description: "Evening news broadcast"
+          }
+        ])
+
+        ' 4. Raw JSON String syntax (if loading from API or string)
+        jsonSample = "[{""title"": ""Documentary"", ""url"": ""https://myvideos.com/doc.mkv"", ""streamFormat"": ""mkv"", ""thumbnail"": """", ""description"": ""Nature documentary""}]"
+        addItems(listContent, jsonSample)
+
+        return listContent
+      end function
+
+      ' ===== Positional addItem Parameter Support =====
+      sub addItem(parent as object, title as string, url as string, fmt as string, thumbnail = "" as string, description = "" as string)
+        item = createObject("roSGNode", "ContentNode")
+        item.title = title
+        item.url = url
+        item.streamFormat = fmt
+        item.HDPosterUrl = thumbnail
+        item.description = description
+        parent.appendChild(item)
+      end sub
+
+      ' ===== Single Object Helper =====
+      sub addItemFromObject(parent as object, obj as object)
+        if type(obj) <> "roAssociativeArray" then return
+
+        item = createObject("roSGNode", "ContentNode")
+        item.title = getString(obj, "title", "Untitled")
+        item.url = getString(obj, "url", "")
+        item.streamFormat = getString(obj, "streamFormat", "mp4")
+        item.HDPosterUrl = getString(obj, "thumbnail", "")
+        item.description = getString(obj, "description", "")
+        parent.appendChild(item)
+      end sub
+
+      ' ===== Array or JSON String Helper =====
+      sub addItems(parent as object, itemsInput as dynamic)
+        itemList = invalid
+
+        if type(itemsInput) = "roArray"
+          itemList = itemsInput
+        else if type(itemsInput) = "roString" or type(itemsInput) = "String"
+          itemList = ParseJson(itemsInput)
+        end if
+
+        if itemList <> invalid and type(itemList) = "roArray"
+          for each obj in itemList
+            addItemFromObject(parent, obj)
+          end for
+        end if
+      end sub
+
+      ' ===== Safe property lookup with default string value =====
+      function getString(obj as object, key as string, defaultVal = "" as string) as string
+        if obj.doesExist(key) and obj[key] <> invalid
+          return obj[key].toStr()
+        end if
+        return defaultVal
+      end function
+
+      sub onItemSelected(event as object)
+        index = event.getData()[0] * m.contentGrid.numColumns + event.getData()[1]
+        selectedItem = m.contentGrid.content.getChild(index)
+
+        videoContent = createObject("roSGNode", "ContentNode")
+        videoContent.url = selectedItem.url
+        videoContent.title = selectedItem.title
+        videoContent.streamFormat = selectedItem.streamFormat
+        videoContent.HttpCertificatesFile = "common:/certs/ca-bundle.crt"
+
+        m.listContainer.visible = false
+        m.video.visible = true
+        m.video.content = videoContent
+        m.video.control = "play"
+        m.video.setFocus(true)
+      end sub
+
+      sub onVideoState(event as object)
+        state = event.getData()
+        if state = "finished" or state = "error"
+          returnToList()
+        end if
+      end sub
+
+      function onKeyEvent(key as string, press as boolean) as boolean
+        if not press then return false
+        if key = "back" and m.video.visible
+          returnToList()
+          return true
+        end if
+        return false
+      end function
+
+      sub returnToList()
+        m.video.control = "stop"
+        m.video.visible = false
+        m.listContainer.visible = true
+        m.contentGrid.setFocus(true)
+      end sub
+    ]]>
+  </script>
+
+</component>

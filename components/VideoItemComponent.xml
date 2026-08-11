@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="VideoItemComponent" extends="Group">
+
+  <interface>
+    <field id="itemContent" type="node" onChange="onContentChanged" />
+  </interface>
+
+  <children>
+    <LayoutGroup
+      layoutDirection="horiz"
+      itemSpacings="[20]"
+      vertAlignment="center">
+
+      <Poster
+        id="thumbnail"
+        width="160"
+        height="90"
+        loadWidth="160"
+        loadHeight="90"
+        loadDisplayMode="scaleToFit"
+        uri="" />
+
+      <LayoutGroup
+        layoutDirection="vert"
+        itemSpacings="[4]"
+        translation="[0,10]">
+
+        <Label
+          id="titleLabel"
+          width="1380"
+          height="40"
+          font="font:MediumBoldSystemFont"
+          color="#EEEEEE"
+          text="" />
+
+        <Label
+          id="descLabel"
+          width="1380"
+          height="32"
+          font="font:SmallSystemFont"
+          color="#AAAAAA"
+          text="" />
+      </LayoutGroup>
+    </LayoutGroup>
+
+    <Poster
+      id="fallbackIcon"
+      width="160"
+      height="90"
+      uri="pkg:/images/video_placeholder.png"
+      visible="false" />
+  </children>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.thumbnail = m.top.findNode("thumbnail")
+        m.fallbackIcon = m.top.findNode("fallbackIcon")
+        m.titleLabel = m.top.findNode("titleLabel")
+        m.descLabel = m.top.findNode("descLabel")
+      end sub
+
+      sub onContentChanged()
+        content = m.top.itemContent
+        if content = invalid then return
+
+        m.titleLabel.text = content.title
+
+        if content.description <> invalid and content.description <> ""
+          m.descLabel.text = content.description
+        else
+          m.descLabel.text = content.url
+        end if
+
+        ' Handle thumbnail or show local fallback icon
+        if content.HDPosterUrl <> invalid and content.HDPosterUrl <> ""
+          m.thumbnail.uri = content.HDPosterUrl
+          m.thumbnail.visible = true
+          m.fallbackIcon.visible = false
+        else
+          m.thumbnail.visible = false
+          m.fallbackIcon.visible = true
+        end if
+      end sub
+    ]]>
+  </script>
+
+</component>
