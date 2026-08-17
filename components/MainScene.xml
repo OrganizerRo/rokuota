@@ -32,14 +32,28 @@
       translation="[0,0]"
       visible="false"
       enableTrickPlay="true" />
+
+    <Timer id="loadWatchdog" repeat="false" />
+
+    <Dialog
+      id="errorDialog"
+      visible="false"
+      title="Playback Error"
+      message=""
+      buttons="[ &quot;OK&quot; ]" />
   </children>
 
   <script type="text/brightscript">
     <![CDATA[
+      ' Configurable: seconds to wait for video to start before aborting
+      LOAD_TIMEOUT_SECONDS = 15
+
       sub init()
         m.contentGrid = m.top.findNode("contentGrid")
         m.listContainer = m.top.findNode("listContainer")
         m.video = m.top.findNode("videoPlayer")
+        m.loadWatchdog = m.top.findNode("loadWatchdog")
+        m.errorDialog = m.top.findNode("errorDialog")
 
         ' Build and set content node
         m.contentGrid.content = buildContentList()
@@ -47,6 +61,13 @@
 
         ' Observe video state to exit playback on finish or error
         m.video.observeField("state", "onVideoState")
+
+        ' Watchdog timer fires if video never reaches "playing" in time
+        m.loadWatchdog.observeField("fire", "onLoadTimeout")
+
+        ' Dialog dismiss returns to list
+        m.errorDialog.observeField("buttonSelected", "onErrorDialogButton")
+
         m.contentGrid.setFocus(true)
       end sub
 
@@ -154,13 +175,61 @@
         m.video.content = videoContent
         m.video.control = "play"
         m.video.setFocus(true)
+
+        ' Start watchdog — fires if video never reaches "playing" within timeout
+        m.loadWatchdog.duration = LOAD_TIMEOUT_SECONDS
+        m.loadWatchdog.control = "start"
       end sub
 
       sub onVideoState(event as object)
         state = event.getData()
-        if state = "finished" or state = "error"
+        if state = "playing"
+          ' Video started successfully — cancel watchdog
+          m.loadWatchdog.control = "stop"
+        else if state = "finished"
+          m.loadWatchdog.control = "stop"
           returnToList()
+        else if state = "error"
+          m.loadWatchdog.control = "stop"
+          showErrorDialog(getHttpErrorMessage(m.video.errorCode))
         end if
+      end sub
+
+      sub onLoadTimeout()
+        ' Watchdog fired — video never started playing in time
+        showErrorDialog("Video failed to load. Please check your connection and try again.")
+      end sub
+
+      ' Classify errorCode into a user-friendly message.
+      ' HTTP errors are surfaced as -(HTTP status code) by the Video node.
+      function getHttpErrorMessage(errorCode as integer) as string
+        if errorCode = -400 then return "Bad request (400). The video URL may be malformed."
+        if errorCode = -401 then return "Unauthorized (401). Login may be required to watch this video."
+        if errorCode = -403 then return "Access denied (403). You do not have permission to watch this video."
+        if errorCode = -404 then return "Video not found (404). The video may have been removed."
+        if errorCode = -408 then return "Request timed out (408). Please check your connection and try again."
+        if errorCode = -429 then return "Too many requests (429). Please wait a moment and try again."
+        if errorCode >= -599 and errorCode <= -500
+          return "Server error (" + (-errorCode).toStr() + "). Please try again later."
+        end if
+        ' Non-HTTP error — fall back to the raw message from the Video node
+        if m.video.errorMsg <> invalid and m.video.errorMsg <> ""
+          return m.video.errorMsg
+        end if
+        return "An unexpected error occurred. Please try again."
+      end function
+
+      sub showErrorDialog(message as string)
+        m.video.control = "stop"
+        m.video.visible = false
+        m.errorDialog.message = message
+        m.errorDialog.visible = true
+        m.errorDialog.setFocus(true)
+      end sub
+
+      sub onErrorDialogButton()
+        m.errorDialog.visible = false
+        returnToList()
       end sub
 
       function onKeyEvent(key as string, press as boolean) as boolean
@@ -169,10 +238,16 @@
           returnToList()
           return true
         end if
+        if key = "back" and m.errorDialog.visible
+          m.errorDialog.visible = false
+          returnToList()
+          return true
+        end if
         return false
       end function
 
       sub returnToList()
+        m.loadWatchdog.control = "stop"
         m.video.control = "stop"
         m.video.visible = false
         m.listContainer.visible = true
