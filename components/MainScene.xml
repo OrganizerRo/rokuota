@@ -2,20 +2,21 @@
 <component name="MainScene" extends="Scene" initialFocus="contentGrid">
 
   <children>
-    <LayoutGroup
+    <Group
       id="listContainer"
-      translation="[100,80]"
-      layoutDirection="vert"
-      itemSpacings="[20]">
+      translation="[100,80]">
 
       <Label
         id="headerLabel"
+        width="1600"
+        height="60"
         text="My Videos"
         font="font:LargeBoldSystemFont"
         color="#FFFFFF" />
 
       <MarkupGrid
         id="contentGrid"
+        translation="[0,100]"
         itemSize="[1600,120]"
         itemSpacing="[0,10]"
         numColumns="1"
@@ -23,7 +24,7 @@
         drawFocusFeedback="true"
         vertFocusAnimationStyle="floatingFocus"
         itemComponentName="VideoItemComponent" />
-    </LayoutGroup>
+    </Group>
 
     <Video
       id="videoPlayer"
@@ -34,26 +35,28 @@
       enableTrickPlay="true" />
 
     <Timer id="loadWatchdog" repeat="false" />
-
-    <Dialog
-      id="errorDialog"
-      visible="false"
-      title="Playback Error"
-      message=""
-      buttons="[ &quot;OK&quot; ]" />
+    <Timer id="errorInputGuard" duration="0.5" repeat="false" />
   </children>
 
   <script type="text/brightscript">
     <![CDATA[
-      ' Configurable: seconds to wait for video to start before aborting
-      LOAD_TIMEOUT_SECONDS = 15
-
       sub init()
+        ' Seconds to wait for video playback to start before aborting
+        m.loadTimeoutSeconds = 10
         m.contentGrid = m.top.findNode("contentGrid")
         m.listContainer = m.top.findNode("listContainer")
         m.video = m.top.findNode("videoPlayer")
         m.loadWatchdog = m.top.findNode("loadWatchdog")
-        m.errorDialog = m.top.findNode("errorDialog")
+        m.errorInputGuard = m.top.findNode("errorInputGuard")
+        m.loadingDialog = createObject("roSGNode", "ProgressDialog")
+        m.loadingDialog.title = "Loading video..."
+        m.errorDialog = createObject("roSGNode", "Dialog")
+        m.errorDialog.title = "Playback Error"
+        m.errorDialog.buttons = [ "OK" ]
+        m.loadingDialogActive = false
+        m.errorDialogActive = false
+        m.errorDialogInputEnabled = false
+        m.playbackAttemptActive = false
 
         ' Build and set content node
         m.contentGrid.content = buildContentList()
@@ -64,9 +67,12 @@
 
         ' Watchdog timer fires if video never reaches "playing" in time
         m.loadWatchdog.observeField("fire", "onLoadTimeout")
+        m.errorInputGuard.observeField("fire", "onErrorInputGuardExpired")
 
         ' Dialog dismiss returns to list
+        m.loadingDialog.observeField("wasClosed", "onLoadingDialogClosed")
         m.errorDialog.observeField("buttonSelected", "onErrorDialogButton")
+        m.errorDialog.observeField("wasClosed", "onErrorDialogClosed")
 
         m.contentGrid.setFocus(true)
       end sub
@@ -75,29 +81,36 @@
         listContent = createObject("roSGNode", "ContentNode")
 
         ' 1. Positional syntax (Overload-style)
-        addItem(listContent, "Big Buck Bunny", "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4", "mp4", "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Big_buck_bunny_poster_big.jpg/220px-Big_buck_bunny_poster_big.jpg", "A comedic short film about a giant rabbit")
+        addItem(listContent, "Big Buck Bunny av1", "https://test-videos.co.uk/vids/bigbuckbunny/mp4/av1/360/Big_Buck_Bunny_360_10s_1MB.mp4", "mp4", "https://test-videos.co.uk/user/pages/images/big_buck_bunny.jpg", "A comedic short film about a giant rabbit")
 
         ' 2. Single Object / Associative Array syntax
         addItemFromObject(listContent, {
-          title: "Sintel",
-          url: "https://myvideos.com/sintel.mkv",
-          streamFormat: "mkv",
-          thumbnail: "https://myvideos.com/thumbs/sintel.jpg",
+          title: "Sintel h264",
+          url: "https://test-videos.co.uk/vids/sintel/mp4/av1/360/Sintel_360_10s_1MB.mp4",
+          streamFormat: "mp4",
+          thumbnail: "https://test-videos.co.uk/user/pages/images/sintel.jpg",
           description: "A girl searches for her lost dragon"
         })
 
         ' 3. Array of Objects syntax
         addItems(listContent, [
           {
-            title: "Tears of Steel",
-            url: "https://myvideos.com/tears/master.m3u8",
-            streamFormat: "hls",
+            title: "Tears of Steel webm vp9",
+            url: "https://test-videos.co.uk/vids/bigbuckbunny/webm/vp9/360/Big_Buck_Bunny_360_10s_1MB.webm",
+            streamFormat: "webm",
             thumbnail: "https://myvideos.com/thumbs/tears.jpg",
             description: "Sci-fi short by Blender Foundation"
           },
+		  {
+            title: "Jelly Fish mkv ",
+            url: "https://test-videos.co.uk/vids/jellyfish/mkv/720/Jellyfish_720_10s_1MB.mkv",
+            streamFormat: "mkv",
+            thumbnail: "https://test-videos.co.uk/user/pages/images/jellyfish.jpg",
+            description: "Sci-fi short by Blender Foundation"
+          },
           {
-            title: "Local News Clip",
-            url: "https://myvideos.com/news.mp4",
+            title: "Local News Clip mkv.h264",
+            url: "https://test-videos.co.uk/vids/bigbuckbunny/mkv/360/Big_Buck_Bunny_360_10s_1MB.mkv",
             streamFormat: "mp4",
             thumbnail: "https://myvideos.com/thumbs/news.jpg",
             description: "Evening news broadcast"
@@ -161,8 +174,15 @@
       end function
 
       sub onItemSelected(event as object)
-        index = event.getData()[0] * m.contentGrid.numColumns + event.getData()[1]
+        position = event.getData()
+        if type(position) = "roArray"
+          index = position[0] * m.contentGrid.numColumns + position[1]
+        else
+          index = position
+        end if
+
         selectedItem = m.contentGrid.content.getChild(index)
+        if selectedItem = invalid then return
 
         videoContent = createObject("roSGNode", "ContentNode")
         videoContent.url = selectedItem.url
@@ -172,19 +192,24 @@
 
         m.listContainer.visible = false
         m.video.visible = true
+        m.playbackAttemptActive = true
+        showLoadingDialog()
         m.video.content = videoContent
         m.video.control = "play"
         m.video.setFocus(true)
 
         ' Start watchdog — fires if video never reaches "playing" within timeout
-        m.loadWatchdog.duration = LOAD_TIMEOUT_SECONDS
+        m.loadWatchdog.duration = m.loadTimeoutSeconds
         m.loadWatchdog.control = "start"
       end sub
 
       sub onVideoState(event as object)
+        if not m.playbackAttemptActive then return
+
         state = event.getData()
         if state = "playing"
           ' Video started successfully — cancel watchdog
+          hideLoadingDialog()
           m.loadWatchdog.control = "stop"
         else if state = "finished"
           m.loadWatchdog.control = "stop"
@@ -196,6 +221,8 @@
       end sub
 
       sub onLoadTimeout()
+        if not m.playbackAttemptActive then return
+
         ' Watchdog fired — video never started playing in time
         showErrorDialog("Video failed to load. Please check your connection and try again.")
       end sub
@@ -219,16 +246,63 @@
         return "An unexpected error occurred. Please try again."
       end function
 
+      sub showLoadingDialog()
+        m.loadingDialogActive = true
+        m.top.dialog = m.loadingDialog
+      end sub
+
+      sub hideLoadingDialog()
+        if not m.loadingDialogActive then return
+
+        m.loadingDialogActive = false
+        m.loadingDialog.close = true
+      end sub
+
+      sub onLoadingDialogClosed()
+        if not m.loadingDialogActive then return
+
+        ' The user dismissed the loading dialog with Back
+        m.loadingDialogActive = false
+        returnToList()
+      end sub
+
       sub showErrorDialog(message as string)
+        if m.errorDialogActive or not m.playbackAttemptActive then return
+
+        ' Ignore any video-state or watchdog events already queued for this attempt.
+        m.playbackAttemptActive = false
+        m.loadWatchdog.control = "stop"
+
+        ' Replacing the Scene dialog closes the loading dialog automatically.
+        ' Do not explicitly close it first, or its pending close can dismiss this dialog.
+        m.loadingDialogActive = false
         m.video.control = "stop"
         m.video.visible = false
         m.errorDialog.message = message
-        m.errorDialog.visible = true
-        m.errorDialog.setFocus(true)
+        m.errorDialogActive = true
+        m.errorDialogInputEnabled = false
+        m.top.dialog = m.errorDialog
+        m.errorInputGuard.control = "start"
       end sub
 
       sub onErrorDialogButton()
-        m.errorDialog.visible = false
+        if not m.errorDialogInputEnabled then return
+
+        m.errorDialog.close = true
+      end sub
+
+      sub onErrorInputGuardExpired()
+        if m.errorDialogActive
+          m.errorDialogInputEnabled = true
+        end if
+      end sub
+
+      sub onErrorDialogClosed()
+        if not m.errorDialogActive then return
+
+        m.errorInputGuard.control = "stop"
+        m.errorDialogInputEnabled = false
+        m.errorDialogActive = false
         returnToList()
       end sub
 
@@ -238,18 +312,21 @@
           returnToList()
           return true
         end if
-        if key = "back" and m.errorDialog.visible
-          m.errorDialog.visible = false
-          returnToList()
-          return true
-        end if
         return false
       end function
 
       sub returnToList()
+        m.playbackAttemptActive = false
         m.loadWatchdog.control = "stop"
+        m.errorInputGuard.control = "stop"
+        m.errorDialogInputEnabled = false
         m.video.control = "stop"
         m.video.visible = false
+        hideLoadingDialog()
+        if m.errorDialogActive
+          m.errorDialogActive = false
+          m.errorDialog.close = true
+        end if
         m.listContainer.visible = true
         m.contentGrid.setFocus(true)
       end sub
