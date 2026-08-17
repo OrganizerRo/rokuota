@@ -10,7 +10,7 @@
       layoutDirection="horiz"
       itemSpacings="[20]"
       vertAlignment="center"
-      translation="[20,15]">
+      translation="[20,60]">
 
       <Poster
         id="thumbnail"
@@ -23,13 +23,12 @@
 
       <LayoutGroup
         layoutDirection="vert"
-        itemSpacings="[4]"
-        translation="[0,10]">
+        itemSpacings="[4]">
 
         <Label
           id="titleLabel"
           width="1380"
-          height="40"
+          height="48"
           font="font:MediumBoldSystemFont"
           color="#EEEEEE"
           text="" />
@@ -37,7 +36,7 @@
         <Label
           id="descLabel"
           width="1380"
-          height="32"
+          height="36"
           font="font:SmallSystemFont"
           color="#AAAAAA"
           text="" />
@@ -48,7 +47,7 @@
       id="fallbackIcon"
       width="160"
       height="90"
-      translation="[20,15]"
+      translation="[20,20]"
       uri="pkg:/images/video_placeholder.png"
       visible="false" />
   </children>
