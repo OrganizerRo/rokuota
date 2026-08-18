@@ -114,6 +114,50 @@
             streamFormat: "mp4",
             thumbnail: "https://myvideos.com/thumbs/news.jpg",
             description: "Evening news broadcast"
+          },
+		  
+		  {
+            title: "Tears of Steel webm vp9",
+            url: "https://test-videos.co.uk/vids/bigbuckbunny/webm/vp9/360/Big_Buck_Bunny_360_10s_1MB.webm",
+            streamFormat: "webm",
+            thumbnail: "https://myvideos.com/thumbs/tears.jpg",
+            description: "Sci-fi short by Blender Foundation"
+          },
+		  {
+            title: "Jelly Fish mkv ",
+            url: "https://test-videos.co.uk/vids/jellyfish/mkv/720/Jellyfish_720_10s_1MB.mkv",
+            streamFormat: "mkv",
+            thumbnail: "https://test-videos.co.uk/user/pages/images/jellyfish.jpg",
+            description: "Sci-fi short by Blender Foundation"
+          },
+          {
+            title: "Local News Clip mkv.h264",
+            url: "https://test-videos.co.uk/vids/bigbuckbunny/mkv/360/Big_Buck_Bunny_360_10s_1MB.mkv",
+            streamFormat: "mp4",
+            thumbnail: "https://myvideos.com/thumbs/news.jpg",
+            description: "Evening news broadcast"
+          },
+		  
+		  {
+            title: "Tears of Steel webm vp9",
+            url: "https://test-videos.co.uk/vids/bigbuckbunny/webm/vp9/360/Big_Buck_Bunny_360_10s_1MB.webm",
+            streamFormat: "webm",
+            thumbnail: "https://myvideos.com/thumbs/tears.jpg",
+            description: "Sci-fi short by Blender Foundation"
+          },
+		  {
+            title: "Jelly Fish mkv ",
+            url: "https://test-videos.co.uk/vids/jellyfish/mkv/720/Jellyfish_720_10s_1MB.mkv",
+            streamFormat: "mkv",
+            thumbnail: "https://test-videos.co.uk/user/pages/images/jellyfish.jpg",
+            description: "Sci-fi short by Blender Foundation"
+          },
+          {
+            title: "Local News Clip mkv.h264",
+            url: "https://test-videos.co.uk/vids/bigbuckbunny/mkv/360/Big_Buck_Bunny_360_10s_1MB.mkv",
+            streamFormat: "mp4",
+            thumbnail: "https://myvideos.com/thumbs/news.jpg",
+            description: "Evening news broadcast"
           }
         ])
 
