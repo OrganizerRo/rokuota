@@ -1,380 +1,165 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<component name="MainScene" extends="Scene" initialFocus="contentGrid">
-
+<component name="MainScene" extends="Scene" initialFocus="tvGuide">
   <children>
-    <Group
-      id="listContainer"
-      translation="[100,80]">
-
-      <Label
-        id="headerLabel"
-        width="1600"
-        height="60"
-        text="My Videos"
-        font="font:LargeBoldSystemFont"
-        color="#FFFFFF" />
-
-      <MarkupGrid
-        id="contentGrid"
-        translation="[0,100]"
-        itemSize="[1600,120]"
-        itemSpacing="[0,10]"
-        numColumns="1"
-        numRows="7"
-        drawFocusFeedback="true"
-        vertFocusAnimationStyle="floatingFocus"
-        itemComponentName="VideoItemComponent" />
-    </Group>
-
+    <TVGuide id="tvGuide" />
     <Video
-      id="videoPlayer"
+      id="errorStaticVideo"
       width="1920"
       height="1080"
-      translation="[0,0]"
       visible="false"
-      enableTrickPlay="true" />
-
-    <Timer id="loadWatchdog" repeat="false" />
-    <Timer id="errorInputGuard" duration="0.5" repeat="false" />
+      loop="true"
+      enableTrickPlay="false" />
+    <VideoComponent id="videoComponent" visible="false" />
+    <ChannelCatalogTask id="catalogTask" />
+    <PlaylistTask id="playlistTask" />
   </children>
 
   <script type="text/brightscript">
     <![CDATA[
       sub init()
-        ' Seconds to wait for video playback to start before aborting
-        m.loadTimeoutSeconds = 10
-        m.contentGrid = m.top.findNode("contentGrid")
-        m.listContainer = m.top.findNode("listContainer")
-        m.video = m.top.findNode("videoPlayer")
-        m.loadWatchdog = m.top.findNode("loadWatchdog")
-        m.errorInputGuard = m.top.findNode("errorInputGuard")
-        m.loadingDialog = createObject("roSGNode", "ProgressDialog")
-        m.loadingDialog.title = "Loading video..."
-        m.errorDialog = createObject("roSGNode", "Dialog")
-        m.errorDialog.title = "Playback Error"
-        m.errorDialog.buttons = [ "OK" ]
-        m.loadingDialogActive = false
-        m.errorDialogActive = false
-        m.errorDialogInputEnabled = false
-        m.playbackAttemptActive = false
+        m.tvGuide = m.top.findNode("tvGuide")
+        m.errorStaticVideo = m.top.findNode("errorStaticVideo")
+        m.videoComponent = m.top.findNode("videoComponent")
+        m.catalogTask = m.top.findNode("catalogTask")
+        m.playlistTask = m.top.findNode("playlistTask")
 
-        ' Build and set content node
-        m.contentGrid.content = buildContentList()
-        m.contentGrid.observeField("itemSelected", "onItemSelected")
+        m.loadingDialog = invalid
+        m.errorDialog = invalid
 
-        ' Observe video state to exit playback on finish or error
-        m.video.observeField("state", "onVideoState")
+        m.tvGuide.observeField("channelSelected", "onChannelSelected")
+        m.catalogTask.observeField("catalog", "onCatalogLoaded")
+        m.catalogTask.observeField("errorMessage", "onCatalogError")
+        m.playlistTask.observeField("playlist", "onPlaylistLoaded")
+        m.playlistTask.observeField("errorMessage", "onPlaylistError")
+        m.videoComponent.observeField("playbackEnded", "onPlaybackEnded")
 
-        ' Watchdog timer fires if video never reaches "playing" in time
-        m.loadWatchdog.observeField("fire", "onLoadTimeout")
-        m.errorInputGuard.observeField("fire", "onErrorInputGuardExpired")
-
-        ' Dialog dismiss returns to list
-        m.loadingDialog.observeField("wasClosed", "onLoadingDialogClosed")
-        m.errorDialog.observeField("buttonSelected", "onErrorDialogButton")
-        m.errorDialog.observeField("wasClosed", "onErrorDialogClosed")
-
-        m.contentGrid.setFocus(true)
+        showLoading("Loading TV guide...")
+        appInfo = createObject("roAppInfo")
+        m.catalogTask.uri = appInfo.getValue("channel_catalog_url")
+        catalogTimeout = 0
+        catalogTimeoutValue = appInfo.getValue("channel_catalog_timeout_seconds")
+        if catalogTimeoutValue <> invalid and catalogTimeoutValue <> ""
+          catalogTimeout = catalogTimeoutValue.toInt()
+        end if
+        if catalogTimeout <= 0 then catalogTimeout = 10
+        m.catalogTask.timeoutSeconds = catalogTimeout
+        m.catalogTask.control = "run"
       end sub
 
-      function buildContentList() as object
-        listContent = createObject("roSGNode", "ContentNode")
-
-        ' 1. Positional syntax (Overload-style)
-        addItem(listContent, "Big Buck Bunny av1", "https://test-videos.co.uk/vids/bigbuckbunny/mp4/av1/360/Big_Buck_Bunny_360_10s_1MB.mp4", "mp4", "https://test-videos.co.uk/user/pages/images/big_buck_bunny.jpg", "A comedic short film about a giant rabbit")
-
-        ' 2. Single Object / Associative Array syntax
-        addItemFromObject(listContent, {
-          title: "Sintel h264",
-          url: "https://test-videos.co.uk/vids/sintel/mp4/av1/360/Sintel_360_10s_1MB.mp4",
-          streamFormat: "mp4",
-          thumbnail: "https://test-videos.co.uk/user/pages/images/sintel.jpg",
-          description: "A girl searches for her lost dragon"
-        })
-
-        ' 3. Array of Objects syntax
-        addItems(listContent, [
-          {
-            title: "Tears of Steel webm vp9",
-            url: "https://test-videos.co.uk/vids/bigbuckbunny/webm/vp9/360/Big_Buck_Bunny_360_10s_1MB.webm",
-            streamFormat: "webm",
-            thumbnail: "https://myvideos.com/thumbs/tears.jpg",
-            description: "Sci-fi short by Blender Foundation"
-          },
-		  {
-            title: "Jelly Fish mkv ",
-            url: "https://test-videos.co.uk/vids/jellyfish/mkv/720/Jellyfish_720_10s_1MB.mkv",
-            streamFormat: "mkv",
-            thumbnail: "https://test-videos.co.uk/user/pages/images/jellyfish.jpg",
-            description: "Sci-fi short by Blender Foundation"
-          },
-          {
-            title: "Local News Clip mkv.h264",
-            url: "https://test-videos.co.uk/vids/bigbuckbunny/mkv/360/Big_Buck_Bunny_360_10s_1MB.mkv",
-            streamFormat: "mp4",
-            thumbnail: "https://myvideos.com/thumbs/news.jpg",
-            description: "Evening news broadcast"
-          },
-		  
-		  {
-            title: "Tears of Steel webm vp9",
-            url: "https://test-videos.co.uk/vids/bigbuckbunny/webm/vp9/360/Big_Buck_Bunny_360_10s_1MB.webm",
-            streamFormat: "webm",
-            thumbnail: "https://myvideos.com/thumbs/tears.jpg",
-            description: "Sci-fi short by Blender Foundation"
-          },
-		  {
-            title: "Jelly Fish mkv ",
-            url: "https://test-videos.co.uk/vids/jellyfish/mkv/720/Jellyfish_720_10s_1MB.mkv",
-            streamFormat: "mkv",
-            thumbnail: "https://test-videos.co.uk/user/pages/images/jellyfish.jpg",
-            description: "Sci-fi short by Blender Foundation"
-          },
-          {
-            title: "Local News Clip mkv.h264",
-            url: "https://test-videos.co.uk/vids/bigbuckbunny/mkv/360/Big_Buck_Bunny_360_10s_1MB.mkv",
-            streamFormat: "mp4",
-            thumbnail: "https://myvideos.com/thumbs/news.jpg",
-            description: "Evening news broadcast"
-          },
-		  
-		  {
-            title: "Tears of Steel webm vp9",
-            url: "https://test-videos.co.uk/vids/bigbuckbunny/webm/vp9/360/Big_Buck_Bunny_360_10s_1MB.webm",
-            streamFormat: "webm",
-            thumbnail: "https://myvideos.com/thumbs/tears.jpg",
-            description: "Sci-fi short by Blender Foundation"
-          },
-		  {
-            title: "Jelly Fish mkv ",
-            url: "https://test-videos.co.uk/vids/jellyfish/mkv/720/Jellyfish_720_10s_1MB.mkv",
-            streamFormat: "mkv",
-            thumbnail: "https://test-videos.co.uk/user/pages/images/jellyfish.jpg",
-            description: "Sci-fi short by Blender Foundation"
-          },
-          {
-            title: "Local News Clip mkv.h264",
-            url: "https://test-videos.co.uk/vids/bigbuckbunny/mkv/360/Big_Buck_Bunny_360_10s_1MB.mkv",
-            streamFormat: "mp4",
-            thumbnail: "https://myvideos.com/thumbs/news.jpg",
-            description: "Evening news broadcast"
-          }
-        ])
-
-        ' 4. Raw JSON String syntax (if loading from API or string)
-        jsonSample = "[{""title"": ""Documentary"", ""url"": ""https://myvideos.com/doc.mkv"", ""streamFormat"": ""mkv"", ""thumbnail"": """", ""description"": ""Nature documentary""}]"
-        addItems(listContent, jsonSample)
-
-        return listContent
-      end function
-
-      ' ===== Positional addItem Parameter Support =====
-      sub addItem(parent as object, title as string, url as string, fmt as string, thumbnail = "" as string, description = "" as string)
-        item = createObject("roSGNode", "ContentNode")
-        item.title = title
-        item.url = url
-        item.streamFormat = fmt
-        item.HDPosterUrl = thumbnail
-        item.description = description
-        parent.appendChild(item)
+      sub onCatalogLoaded(event as object)
+        catalog = event.getData()
+        if catalog = invalid then return
+        closeLoading()
+        m.tvGuide.content = catalog
+        m.tvGuide.setFocus(true)
       end sub
 
-      ' ===== Single Object Helper =====
-      sub addItemFromObject(parent as object, obj as object)
-        if type(obj) <> "roAssociativeArray" then return
-
-        item = createObject("roSGNode", "ContentNode")
-        item.title = getString(obj, "title", "Untitled")
-        item.url = getString(obj, "url", "")
-        item.streamFormat = getString(obj, "streamFormat", "mp4")
-        item.HDPosterUrl = getString(obj, "thumbnail", "")
-        item.description = getString(obj, "description", "")
-        parent.appendChild(item)
+      sub onCatalogError(event as object)
+        message = event.getData()
+        if message <> "" then showApiError(message)
       end sub
 
-      ' ===== Array or JSON String Helper =====
-      sub addItems(parent as object, itemsInput as dynamic)
-        itemList = invalid
+      sub onChannelSelected(event as object)
+        index = event.getData()
+        if m.tvGuide.content = invalid then return
+        channel = m.tvGuide.content.getChild(index)
+        if channel = invalid then return
 
-        if type(itemsInput) = "roArray"
-          itemList = itemsInput
-        else if type(itemsInput) = "roString" or type(itemsInput) = "String"
-          itemList = ParseJson(itemsInput)
+        status = channel.status.lcase()
+        if status = "offline" or status = "inactive" or status = "disabled"
+          showError(channel.title + " is currently " + channel.status + ".")
+          return
         end if
 
-        if itemList <> invalid and type(itemList) = "roArray"
-          for each obj in itemList
-            addItemFromObject(parent, obj)
-          end for
-        end if
+        m.selectedChannel = channel
+        showLoading("Loading " + channel.title + "...")
+        m.playlistTask.control = "stop"
+        m.playlistTask.uri = channel.playlistUrl
+        m.playlistTask.playlistType = channel.playlistType
+        m.playlistTask.resolverUri = channel.url
+        m.playlistTask.control = "run"
       end sub
 
-      ' ===== Safe property lookup with default string value =====
-      function getString(obj as object, key as string, defaultVal = "" as string) as string
-        if obj.doesExist(key) and obj[key] <> invalid
-          return obj[key].toStr()
-        end if
-        return defaultVal
-      end function
-
-      sub onItemSelected(event as object)
-        position = event.getData()
-        if type(position) = "roArray"
-          index = position[0] * m.contentGrid.numColumns + position[1]
+      sub onPlaylistLoaded(event as object)
+        playlist = event.getData()
+        if playlist = invalid or m.selectedChannel = invalid then return
+        closeLoading()
+        m.tvGuide.visible = false
+        m.videoComponent.visible = true
+        if m.selectedChannel.playlistType = "server-random"
+          m.videoComponent.startIndex = 0
         else
-          index = position
+          m.videoComponent.startIndex = m.selectedChannel.currentIndex
         end if
-
-        selectedItem = m.contentGrid.content.getChild(index)
-        if selectedItem = invalid then return
-
-        videoContent = createObject("roSGNode", "ContentNode")
-        videoContent.url = selectedItem.url
-        videoContent.title = selectedItem.title
-        videoContent.streamFormat = selectedItem.streamFormat
-        videoContent.HttpCertificatesFile = "common:/certs/ca-bundle.crt"
-
-        m.listContainer.visible = false
-        m.video.visible = true
-        m.playbackAttemptActive = true
-        showLoadingDialog()
-        m.video.content = videoContent
-        m.video.control = "play"
-        m.video.setFocus(true)
-
-        ' Start watchdog — fires if video never reaches "playing" within timeout
-        m.loadWatchdog.duration = m.loadTimeoutSeconds
-        m.loadWatchdog.control = "start"
+        m.videoComponent.channelTitle = m.selectedChannel.title
+        m.videoComponent.playlist = playlist
+        m.videoComponent.setFocus(true)
       end sub
 
-      sub onVideoState(event as object)
-        if not m.playbackAttemptActive then return
-
-        state = event.getData()
-        if state = "playing"
-          ' Video started successfully — cancel watchdog
-          hideLoadingDialog()
-          m.loadWatchdog.control = "stop"
-        else if state = "finished"
-          m.loadWatchdog.control = "stop"
-          returnToList()
-        else if state = "error"
-          m.loadWatchdog.control = "stop"
-          showErrorDialog(getHttpErrorMessage(m.video.errorCode))
-        end if
+      sub onPlaylistError(event as object)
+        message = event.getData()
+        if message <> "" then showApiError(message)
       end sub
 
-      sub onLoadTimeout()
-        if not m.playbackAttemptActive then return
-
-        ' Watchdog fired — video never started playing in time
-        showErrorDialog("Video failed to load. Please check your connection and try again.")
+      sub onPlaybackEnded()
+        m.videoComponent.visible = false
+        m.tvGuide.visible = true
+        m.tvGuide.setFocus(true)
       end sub
 
-      ' Classify errorCode into a user-friendly message.
-      ' HTTP errors are surfaced as -(HTTP status code) by the Video node.
-      function getHttpErrorMessage(errorCode as integer) as string
-        if errorCode = -400 then return "Bad request (400). The video URL may be malformed."
-        if errorCode = -401 then return "Unauthorized (401). Login may be required to watch this video."
-        if errorCode = -403 then return "Access denied (403). You do not have permission to watch this video."
-        if errorCode = -404 then return "Video not found (404). The video may have been removed."
-        if errorCode = -408 then return "Request timed out (408). Please check your connection and try again."
-        if errorCode = -429 then return "Too many requests (429). Please wait a moment and try again."
-        if errorCode >= -599 and errorCode <= -500
-          return "Server error (" + (-errorCode).toStr() + "). Please try again later."
-        end if
-        ' Non-HTTP error — fall back to the raw message from the Video node
-        if m.video.errorMsg <> invalid and m.video.errorMsg <> ""
-          return m.video.errorMsg
-        end if
-        return "An unexpected error occurred. Please try again."
-      end function
-
-      sub showLoadingDialog()
-        m.loadingDialogActive = true
+      sub showLoading(title as string)
+        m.loadingDialog = createObject("roSGNode", "ProgressDialog")
+        m.loadingDialog.title = title
         m.top.dialog = m.loadingDialog
       end sub
 
-      sub hideLoadingDialog()
-        if not m.loadingDialogActive then return
-
-        m.loadingDialogActive = false
-        m.loadingDialog.close = true
+      sub closeLoading()
+        if m.loadingDialog <> invalid then m.loadingDialog.close = true
+        m.loadingDialog = invalid
       end sub
 
-      sub onLoadingDialogClosed()
-        if not m.loadingDialogActive then return
-
-        ' The user dismissed the loading dialog with Back
-        m.loadingDialogActive = false
-        returnToList()
-      end sub
-
-      sub showErrorDialog(message as string)
-        if m.errorDialogActive or not m.playbackAttemptActive then return
-
-        ' Ignore any video-state or watchdog events already queued for this attempt.
-        m.playbackAttemptActive = false
-        m.loadWatchdog.control = "stop"
-
-        ' Replacing the Scene dialog closes the loading dialog automatically.
-        ' Do not explicitly close it first, or its pending close can dismiss this dialog.
-        m.loadingDialogActive = false
-        m.video.control = "stop"
-        m.video.visible = false
+      sub showError(message as string)
+        m.loadingDialog = invalid
+        m.errorDialog = createObject("roSGNode", "Dialog")
+        m.errorDialog.title = "TV Guide Error"
+        m.errorDialog.buttons = [ "OK" ]
         m.errorDialog.message = message
-        m.errorDialogActive = true
-        m.errorDialogInputEnabled = false
+        m.errorDialog.observeField("buttonSelected", "onErrorButtonSelected")
+        m.errorDialog.observeField("wasClosed", "onErrorClosed")
         m.top.dialog = m.errorDialog
-        m.errorInputGuard.control = "start"
       end sub
 
-      sub onErrorDialogButton()
-        if not m.errorDialogInputEnabled then return
+      sub showApiError(message as string)
+        staticContent = createObject("roSGNode", "ContentNode")
+        staticContent.url = "pkg:/tvstatic2p.mp4"
+        staticContent.title = "TV static"
+        staticContent.streamFormat = "mp4"
 
-        m.errorDialog.close = true
+        m.tvGuide.visible = false
+        m.videoComponent.visible = false
+        m.errorStaticVideo.visible = true
+        m.errorStaticVideo.content = staticContent
+        m.errorStaticVideo.control = "play"
+        showError(message)
       end sub
 
-      sub onErrorInputGuardExpired()
-        if m.errorDialogActive
-          m.errorDialogInputEnabled = true
+      sub onErrorButtonSelected()
+        if m.errorDialog <> invalid then m.errorDialog.close = true
+      end sub
+
+      sub onErrorClosed()
+        m.errorDialog = invalid
+        if m.errorStaticVideo.visible
+          m.errorStaticVideo.control = "stop"
+          m.errorStaticVideo.visible = false
+          m.tvGuide.visible = true
         end if
-      end sub
-
-      sub onErrorDialogClosed()
-        if not m.errorDialogActive then return
-
-        m.errorInputGuard.control = "stop"
-        m.errorDialogInputEnabled = false
-        m.errorDialogActive = false
-        returnToList()
-      end sub
-
-      function onKeyEvent(key as string, press as boolean) as boolean
-        if not press then return false
-        if key = "back" and m.video.visible
-          returnToList()
-          return true
+        if m.videoComponent.visible
+          m.videoComponent.setFocus(true)
+        else
+          m.tvGuide.setFocus(true)
         end if
-        return false
-      end function
-
-      sub returnToList()
-        m.playbackAttemptActive = false
-        m.loadWatchdog.control = "stop"
-        m.errorInputGuard.control = "stop"
-        m.errorDialogInputEnabled = false
-        m.video.control = "stop"
-        m.video.visible = false
-        hideLoadingDialog()
-        if m.errorDialogActive
-          m.errorDialogActive = false
-          m.errorDialog.close = true
-        end if
-        m.listContainer.visible = true
-        m.contentGrid.setFocus(true)
       end sub
     ]]>
   </script>
-
 </component>

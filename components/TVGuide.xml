@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="TVGuide" extends="Group" initialFocus="channelGrid">
+  <interface>
+    <field id="content" type="node" />
+    <field id="channelSelected" type="integer" alwaysNotify="true" />
+  </interface>
+
+  <children>
+    <Rectangle width="1920" height="1080" color="#0C131C" />
+
+    <Label
+      translation="[110,55]"
+      width="1700"
+      height="60"
+      text="TV Guide"
+      font="font:LargeBoldSystemFont"
+      color="#FFFFFF" />
+
+    <Label
+      translation="[110,120]"
+      width="1700"
+      height="36"
+      text="Choose a channel to start its shuffled playlist"
+      font="font:MediumSystemFont"
+      color="#9DB0C3" />
+
+    <MarkupGrid
+      id="channelGrid"
+      translation="[110,190]"
+      itemSize="[1700,118]"
+      itemSpacing="[0,12]"
+      numColumns="1"
+      numRows="6"
+      drawFocusFeedback="true"
+      vertFocusAnimationStyle="floatingFocus"
+      itemComponentName="ChannelGuideItem" />
+  </children>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.channelGrid = m.top.findNode("channelGrid")
+        m.top.observeField("content", "onContentChanged")
+        m.channelGrid.observeField("itemSelected", "onItemSelected")
+      end sub
+
+      sub onContentChanged()
+        m.channelGrid.content = m.top.content
+      end sub
+
+      sub onItemSelected(event as object)
+        position = event.getData()
+        if type(position) = "roArray"
+          m.top.channelSelected = position[0] * m.channelGrid.numColumns + position[1]
+        else
+          m.top.channelSelected = position
+        end if
+      end sub
+
+      sub focusGuide()
+        m.channelGrid.setFocus(true)
+      end sub
+    ]]>
+  </script>
+</component>

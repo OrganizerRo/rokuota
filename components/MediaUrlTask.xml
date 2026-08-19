@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="MediaUrlTask" extends="Task">
+  <interface>
+    <field id="uri" type="string" />
+    <field id="mediaUrl" type="string" alwaysNotify="true" />
+    <field id="errorMessage" type="string" alwaysNotify="true" />
+  </interface>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.top.functionName = "resolveMediaUrl"
+      end sub
+
+      sub resolveMediaUrl()
+        m.top.errorMessage = ""
+        if m.top.uri = ""
+          m.top.errorMessage = "The channel media resolver URL is missing."
+          return
+        end if
+
+        transfer = createObject("roUrlTransfer")
+        transfer.setCertificatesFile("common:/certs/ca-bundle.crt")
+        transfer.initClientCertificates()
+        transfer.setUrl(m.top.uri)
+        body = transfer.getToString().replace(chr(13), "").replace(chr(10), "").trim()
+        code = transfer.getResponseCode()
+
+        if code < 200 or code >= 300
+          m.top.errorMessage = "Media URL resolution failed with HTTP " + code.toStr() + "."
+          return
+        end if
+
+        lowerUrl = body.lcase()
+        if lowerUrl.left(7) <> "http://" and lowerUrl.left(8) <> "https://"
+          m.top.errorMessage = "The server returned a media location Roku cannot stream."
+          return
+        end if
+        m.top.mediaUrl = body
+      end sub
+    ]]>
+  </script>
+</component>

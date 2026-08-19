@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="PlaylistTask" extends="Task">
+  <interface>
+    <field id="uri" type="string" />
+    <field id="playlistType" type="string" />
+    <field id="resolverUri" type="string" />
+    <field id="playlist" type="node" />
+    <field id="errorMessage" type="string" />
+  </interface>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.top.functionName = "loadPlaylist"
+      end sub
+
+      sub loadPlaylist()
+        m.top.errorMessage = ""
+        response = fetchText(m.top.uri)
+        if response.error <> ""
+          m.top.errorMessage = response.error
+          return
+        end if
+
+        playlistType = m.top.playlistType.lcase()
+        if playlistType = ""
+          playlistType = extensionFromUrl(m.top.uri)
+        end if
+
+        if playlistType = "server-random"
+          playlist = parseServerPlaylist(response.body)
+        else if playlistType = "pls"
+          playlist = parsePls(response.body)
+        else if playlistType = "m3u" or playlistType = "m3u8"
+          playlist = parseM3u(response.body)
+        else
+          m.top.errorMessage = "Unsupported playlist type: " + playlistType
+          return
+        end if
+
+        if playlist.getChildCount() = 0
+          m.top.errorMessage = "The selected channel playlist contains no playable entries."
+          return
+        end if
+        m.top.playlist = playlist
+      end sub
+
+      function fetchText(uri as string) as object
+        transfer = createObject("roUrlTransfer")
+        transfer.setCertificatesFile("common:/certs/ca-bundle.crt")
+        transfer.initClientCertificates()
+        transfer.setUrl(uri)
+        body = transfer.getToString()
+        code = transfer.getResponseCode()
+
+        if code < 200 or code >= 300
+          return { body: "", error: "Playlist request failed with HTTP " + code.toStr() + "." }
+        end if
+        if body = "" then return { body: "", error: "The playlist response was empty." }
+        return { body: body, error: "" }
+      end function
+
+      function parseServerPlaylist(text as string) as object
+        playlist = createObject("roSGNode", "ContentNode")
+        envelope = ParseJson(text)
+        if type(envelope) <> "roAssociativeArray" then return playlist
+        if not envelope.doesExist("items") or type(envelope.items) <> "roArray" then return playlist
+
+        for index = 0 to envelope.items.count() - 1
+          item = createObject("roSGNode", "ContentNode")
+          item.addFields({ resolveUrl: m.top.resolverUri })
+          item.title = "Shuffled program " + (index + 1).toStr()
+          playlist.appendChild(item)
+        end for
+        return playlist
+      end function
+
+      function parseM3u(text as string) as object
+        playlist = createObject("roSGNode", "ContentNode")
+        pendingTitle = ""
+        lines = text.split(chr(10))
+        for each rawLine in lines
+          line = cleanLine(rawLine)
+          if line.left(8).ucase() = "#EXTINF:"
+            comma = instr(1, line, ",")
+            if comma > 0 then pendingTitle = line.mid(comma)
+          else if line <> "" and line.left(1) <> "#"
+            appendEntry(playlist, line, pendingTitle)
+            pendingTitle = ""
+          end if
+        end for
+        return playlist
+      end function
+
+      function parsePls(text as string) as object
+        playlist = createObject("roSGNode", "ContentNode")
+        files = {}
+        titles = {}
+        maxIndex = 0
+
+        for each rawLine in text.split(chr(10))
+          line = cleanLine(rawLine)
+          equalsAt = instr(1, line, "=")
+          if equalsAt > 1
+            key = line.left(equalsAt - 1).lcase()
+            value = line.mid(equalsAt)
+            if key.left(4) = "file"
+              index = key.mid(4).toInt()
+              files[index.toStr()] = value
+              if index > maxIndex then maxIndex = index
+            else if key.left(5) = "title"
+              index = key.mid(5).toInt()
+              titles[index.toStr()] = value
+            end if
+          end if
+        end for
+
+        for index = 1 to maxIndex
+          key = index.toStr()
+          if files.doesExist(key)
+            title = ""
+            if titles.doesExist(key) then title = titles[key]
+            appendEntry(playlist, files[key], title)
+          end if
+        end for
+        return playlist
+      end function
+
+      sub appendEntry(parent as object, url as string, title as string)
+        item = createObject("roSGNode", "ContentNode")
+        item.addFields({ resolveUrl: "" })
+        item.url = resolveEntryUrl(url)
+        item.title = title
+        if item.title = "" then item.title = "Playlist item " + (parent.getChildCount() + 1).toStr()
+        item.streamFormat = mediaFormat(url)
+        item.httpCertificatesFile = "common:/certs/ca-bundle.crt"
+        parent.appendChild(item)
+      end sub
+
+      function resolveEntryUrl(value as string) as string
+        entryUrl = cleanLine(value)
+        lowerUrl = entryUrl.lcase()
+        if lowerUrl.left(7) = "http://" or lowerUrl.left(8) = "https://" then return entryUrl
+
+        baseUrl = m.top.uri
+        if entryUrl.left(2) = "//"
+          schemeParts = baseUrl.split(":")
+          if schemeParts.count() > 0 then return schemeParts[0] + ":" + entryUrl
+        end if
+
+        baseParts = baseUrl.split("/")
+        if entryUrl.left(1) = "/" and baseParts.count() >= 3
+          return baseParts[0] + "//" + baseParts[2] + entryUrl
+        end if
+
+        queryAt = instr(1, baseUrl, "?")
+        if queryAt > 0 then baseUrl = baseUrl.left(queryAt - 1)
+        fragmentAt = instr(1, baseUrl, "#")
+        if fragmentAt > 0 then baseUrl = baseUrl.left(fragmentAt - 1)
+        for index = len(baseUrl) to 1 step -1
+          if baseUrl.mid(index - 1, 1) = "/"
+            return baseUrl.left(index) + entryUrl
+          end if
+        end for
+        return entryUrl
+      end function
+
+      function mediaFormat(url as string) as string
+        extension = extensionFromUrl(url)
+        if extension = "m3u8" then return "hls"
+        if extension = "mpd" then return "dash"
+        if extension = "ism" or extension = "isml" then return "ism"
+        if extension = "" then return "mp4"
+        return extension
+      end function
+
+      function extensionFromUrl(url as string) as string
+        cleanUrl = url
+        queryAt = instr(1, cleanUrl, "?")
+        if queryAt > 0 then cleanUrl = cleanUrl.left(queryAt - 1)
+        fragmentAt = instr(1, cleanUrl, "#")
+        if fragmentAt > 0 then cleanUrl = cleanUrl.left(fragmentAt - 1)
+        dotAt = 0
+        for index = len(cleanUrl) to 1 step -1
+          if cleanUrl.mid(index - 1, 1) = "."
+            dotAt = index
+            exit for
+          end if
+          if cleanUrl.mid(index - 1, 1) = "/" then exit for
+        end for
+        if dotAt = 0 then return ""
+        return cleanUrl.mid(dotAt).lcase()
+      end function
+
+      function cleanLine(value as string) as string
+        return value.replace(chr(13), "").trim()
+      end function
+    ]]>
+  </script>
+</component>

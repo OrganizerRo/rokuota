@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="VideoComponent" extends="Group">
+  <interface>
+    <field id="playlist" type="node" />
+    <field id="startIndex" type="integer" value="0" />
+    <field id="channelTitle" type="string" />
+    <field id="playbackEnded" type="boolean" alwaysNotify="true" />
+    <field id="exitReason" type="string" />
+  </interface>
+
+  <children>
+    <Video
+      id="videoPlayer"
+      width="1920"
+      height="1080"
+      enableTrickPlay="true" />
+
+    <Rectangle
+      id="statusPanel"
+      translation="[0,930]"
+      width="1920"
+      height="150"
+      color="#CC000000"
+      visible="false" />
+
+    <Label
+      id="statusLabel"
+      translation="[80,970]"
+      width="1760"
+      height="55"
+      font="font:MediumBoldSystemFont"
+      color="#FFFFFF"
+      visible="false" />
+
+    <Timer id="loadWatchdog" duration="15" repeat="false" />
+    <Timer id="skipTimer" duration="2" repeat="false" />
+    <MediaUrlTask id="mediaUrlTask" />
+  </children>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.video = m.top.findNode("videoPlayer")
+        m.statusPanel = m.top.findNode("statusPanel")
+        m.statusLabel = m.top.findNode("statusLabel")
+        m.loadWatchdog = m.top.findNode("loadWatchdog")
+        m.skipTimer = m.top.findNode("skipTimer")
+        m.mediaUrlTask = m.top.findNode("mediaUrlTask")
+        m.exitDialog = createObject("roSGNode", "Dialog")
+        m.exitDialog.title = "Return to TV Guide?"
+        m.exitDialog.message = "The rest of this channel's playlist will not be played."
+        m.exitDialog.buttons = [ "Continue Watching", "Return to Guide" ]
+        m.exitDialogActive = false
+        m.active = false
+
+        m.top.observeField("playlist", "onPlaylistChanged")
+        m.video.observeField("state", "onVideoState")
+        m.mediaUrlTask.observeField("mediaUrl", "onMediaUrlResolved")
+        m.mediaUrlTask.observeField("errorMessage", "onMediaUrlError")
+        m.loadWatchdog.observeField("fire", "onLoadTimeout")
+        m.skipTimer.observeField("fire", "playNext")
+        m.exitDialog.observeField("buttonSelected", "onExitDialogButton")
+        m.exitDialog.observeField("wasClosed", "onExitDialogClosed")
+      end sub
+
+      sub onPlaylistChanged()
+        if m.top.playlist = invalid then return
+        count = m.top.playlist.getChildCount()
+        if count = 0
+          endPlayback("error")
+          return
+        end if
+
+        m.currentIndex = m.top.startIndex
+        if m.currentIndex < 0 then m.currentIndex = 0
+        if m.currentIndex >= count then m.currentIndex = count - 1
+        m.active = true
+        playCurrent()
+      end sub
+
+      sub playCurrent()
+        if not m.active then return
+        item = m.top.playlist.getChild(m.currentIndex)
+        if item = invalid
+          endPlayback("finished")
+          return
+        end if
+
+        if item.resolveUrl <> ""
+          m.resolvePending = true
+          showStatus("Selecting program " + (m.currentIndex + 1).toStr() + " of " + m.top.playlist.getChildCount().toStr() + "...")
+          m.mediaUrlTask.control = "stop"
+          m.mediaUrlTask.uri = item.resolveUrl
+          m.mediaUrlTask.control = "run"
+          return
+        end if
+        startVideo(item.url, item.title, item.streamFormat)
+      end sub
+
+      sub onMediaUrlResolved(event as object)
+        mediaUrl = event.getData()
+        if not m.active or not m.resolvePending or mediaUrl = "" then return
+        m.resolvePending = false
+        title = m.top.channelTitle + " - Program " + (m.currentIndex + 1).toStr()
+        startVideo(mediaUrl, title, mediaFormat(mediaUrl))
+      end sub
+
+      sub onMediaUrlError(event as object)
+        message = event.getData()
+        if not m.active or not m.resolvePending or message = "" then return
+        m.resolvePending = false
+        skipFailedItem(message)
+      end sub
+
+      sub startVideo(url as string, title as string, streamFormat as string)
+        m.itemStarted = false
+        m.failurePending = false
+        content = createObject("roSGNode", "ContentNode")
+        content.url = url
+        content.title = title
+        content.streamFormat = streamFormat
+        content.httpCertificatesFile = "common:/certs/ca-bundle.crt"
+
+        showStatus("Loading " + content.title + "  (" + (m.currentIndex + 1).toStr() + " of " + m.top.playlist.getChildCount().toStr() + ")")
+        m.video.content = content
+        m.video.control = "play"
+        m.loadWatchdog.control = "start"
+        m.video.setFocus(true)
+      end sub
+
+      function mediaFormat(url as string) as string
+        cleanUrl = url
+        queryAt = instr(1, cleanUrl, "?")
+        if queryAt > 0 then cleanUrl = cleanUrl.left(queryAt - 1)
+        extension = ""
+        for index = len(cleanUrl) to 1 step -1
+          character = cleanUrl.mid(index - 1, 1)
+          if character = "."
+            extension = cleanUrl.mid(index).lcase()
+            exit for
+          end if
+          if character = "/" then exit for
+        end for
+        if extension = "m3u8" then return "hls"
+        if extension = "mpd" then return "dash"
+        if extension = "ism" or extension = "isml" then return "ism"
+        if extension = "" then return "mp4"
+        return extension
+      end function
+
+      sub onVideoState(event as object)
+        if not m.active then return
+        state = event.getData()
+        if state = "playing"
+          m.itemStarted = true
+          m.loadWatchdog.control = "stop"
+          hideStatus()
+        else if state = "finished"
+          if not m.itemStarted then return
+          m.itemStarted = false
+          m.loadWatchdog.control = "stop"
+          playNext()
+        else if state = "error"
+          m.loadWatchdog.control = "stop"
+          skipFailedItem(playbackErrorMessage())
+        end if
+      end sub
+
+      sub onLoadTimeout()
+        if not m.active then return
+        if m.video.state = "playing" then return
+        m.video.control = "stop"
+        skipFailedItem("This playlist item timed out.")
+      end sub
+
+      sub skipFailedItem(message as string)
+        if not m.active or m.failurePending then return
+        m.failurePending = true
+        showStatus(message + " Skipping to the next item...")
+        m.skipTimer.control = "start"
+      end sub
+
+      sub playNext()
+        if not m.active then return
+        m.skipTimer.control = "stop"
+        m.failurePending = false
+        m.currentIndex++
+        if m.currentIndex >= m.top.playlist.getChildCount()
+          endPlayback("finished")
+        else
+          playCurrent()
+        end if
+      end sub
+
+      function playbackErrorMessage() as string
+        if m.video.errorMsg <> invalid and m.video.errorMsg <> "" then return m.video.errorMsg + "."
+        return "This playlist item could not be played."
+      end function
+
+      function onKeyEvent(key as string, press as boolean) as boolean
+        if not press then return false
+        if key = "back" and m.active
+          if not m.exitDialogActive
+            m.exitDialogActive = true
+            m.top.getScene().dialog = m.exitDialog
+          end if
+          return true
+        end if
+        return false
+      end function
+
+      sub onExitDialogButton(event as object)
+        choice = event.getData()
+        m.exitDialog.close = true
+        if choice = 1 then endPlayback("user")
+      end sub
+
+      sub onExitDialogClosed()
+        m.exitDialogActive = false
+        if m.active then m.video.setFocus(true)
+      end sub
+
+      sub showStatus(message as string)
+        m.statusLabel.text = message
+        m.statusPanel.visible = true
+        m.statusLabel.visible = true
+      end sub
+
+      sub hideStatus()
+        m.statusPanel.visible = false
+        m.statusLabel.visible = false
+      end sub
+
+      sub endPlayback(reason as string)
+        m.active = false
+        m.resolvePending = false
+        m.itemStarted = false
+        m.failurePending = false
+        m.mediaUrlTask.control = "stop"
+        m.loadWatchdog.control = "stop"
+        m.skipTimer.control = "stop"
+        m.video.control = "stop"
+        hideStatus()
+        if m.exitDialogActive
+          m.exitDialogActive = false
+          m.exitDialog.close = true
+        end if
+        m.top.exitReason = reason
+        m.top.playbackEnded = true
+      end sub
+    ]]>
+  </script>
+</component>
