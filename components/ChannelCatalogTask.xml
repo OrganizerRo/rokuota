@@ -146,7 +146,8 @@
       function formatTags(channel as object) as string
         if not channel.doesExist("tags") or channel.tags = invalid then return ""
         if type(channel.tags) = "roArray" then return channel.tags.join(", ")
-        return channel.tags.toStr()
+        if type(channel.tags) = "roString" or type(channel.tags) = "String" then return channel.tags
+        return ""
       end function
 
       function getString(obj as object, key as string, fallback = "" as string) as string

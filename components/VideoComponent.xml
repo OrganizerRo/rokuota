@@ -194,6 +194,7 @@
 
       function playbackErrorMessage() as string
         if m.video.errorMsg <> invalid and m.video.errorMsg <> "" then return m.video.errorMsg + "."
+        if m.video.errorStr <> invalid and m.video.errorStr <> "" then return m.video.errorStr + "."
         return "This playlist item could not be played."
       end function
 

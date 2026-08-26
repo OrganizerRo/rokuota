@@ -2,6 +2,7 @@
 <component name="MediaUrlTask" extends="Task">
   <interface>
     <field id="uri" type="string" />
+    <field id="timeoutSeconds" type="integer" value="15" />
     <field id="mediaUrl" type="string" alwaysNotify="true" />
     <field id="errorMessage" type="string" alwaysNotify="true" />
   </interface>
@@ -23,8 +24,30 @@
         transfer.setCertificatesFile("common:/certs/ca-bundle.crt")
         transfer.initClientCertificates()
         transfer.setUrl(m.top.uri)
-        body = transfer.getToString().replace(chr(13), "").replace(chr(10), "").trim()
-        code = transfer.getResponseCode()
+        port = createObject("roMessagePort")
+        transfer.setMessagePort(port)
+
+        if not transfer.asyncGetToString()
+          m.top.errorMessage = "The media URL request could not be started."
+          return
+        end if
+
+        timeoutSeconds = m.top.timeoutSeconds
+        if timeoutSeconds <= 0 then timeoutSeconds = 15
+        event = wait(timeoutSeconds * 1000, port)
+        if event = invalid
+          transfer.asyncCancel()
+          m.top.errorMessage = "The media URL server did not respond within " + timeoutSeconds.toStr() + " seconds."
+          return
+        end if
+        if type(event) <> "roUrlEvent"
+          transfer.asyncCancel()
+          m.top.errorMessage = "The media URL server returned an unexpected network event."
+          return
+        end if
+
+        body = event.getString().replace(chr(13), "").replace(chr(10), "").trim()
+        code = event.getResponseCode()
 
         if code < 200 or code >= 300
           m.top.errorMessage = "Media URL resolution failed with HTTP " + code.toStr() + "."

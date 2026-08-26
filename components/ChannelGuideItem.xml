@@ -66,7 +66,7 @@
         else
           countText = item.totalNumOfVideos.toStr() + " videos"
           if item.totalPlaylistInMinutes > 0
-            countText += "  |  " + item.totalPlaylistInMinutes.toStr() + " min"
+            countText += "  |  " + int(item.totalPlaylistInMinutes).toStr() + " min"
           end if
           countText += "  |  Playing " + (item.currentIndex + 1).toStr()
         end if

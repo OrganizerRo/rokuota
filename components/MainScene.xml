@@ -160,6 +160,14 @@
           m.tvGuide.setFocus(true)
         end if
       end sub
+
+      function onKeyEvent(key as string, press as boolean) as boolean
+        if not press then return false
+        if key = "back" and m.tvGuide.visible and not m.videoComponent.visible
+          return false
+        end if
+        return false
+      end function
     ]]>
   </script>
 </component>

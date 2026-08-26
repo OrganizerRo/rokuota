@@ -4,6 +4,7 @@
     <field id="uri" type="string" />
     <field id="playlistType" type="string" />
     <field id="resolverUri" type="string" />
+    <field id="timeoutSeconds" type="integer" value="15" />
     <field id="playlist" type="node" />
     <field id="errorMessage" type="string" />
   </interface>
@@ -50,8 +51,27 @@
         transfer.setCertificatesFile("common:/certs/ca-bundle.crt")
         transfer.initClientCertificates()
         transfer.setUrl(uri)
-        body = transfer.getToString()
-        code = transfer.getResponseCode()
+        port = createObject("roMessagePort")
+        transfer.setMessagePort(port)
+
+        if not transfer.asyncGetToString()
+          return { body: "", error: "The playlist request could not be started." }
+        end if
+
+        timeoutSeconds = m.top.timeoutSeconds
+        if timeoutSeconds <= 0 then timeoutSeconds = 15
+        event = wait(timeoutSeconds * 1000, port)
+        if event = invalid
+          transfer.asyncCancel()
+          return { body: "", error: "The playlist server did not respond within " + timeoutSeconds.toStr() + " seconds." }
+        end if
+        if type(event) <> "roUrlEvent"
+          transfer.asyncCancel()
+          return { body: "", error: "The playlist server returned an unexpected network event." }
+        end if
+
+        body = event.getString()
+        code = event.getResponseCode()
 
         if code < 200 or code >= 300
           return { body: "", error: "Playlist request failed with HTTP " + code.toStr() + "." }
