@@ -16,11 +16,12 @@
       id="videoPlayer"
       width="1920"
       height="1080"
-      enableTrickPlay="true" />
+      enableTrickPlay="true"
+      notificationInterval="0.5" />
     <Audio id="audioPlayer" notificationInterval="0.5" />
 
-    <Group id="videoMetadataPanel" visible="false" translation="[60,60]">
-      <Rectangle width="1180" height="250" color="#CC000000" />
+    <Group id="videoMetadataPanel" visible="false" translation="[60,380]">
+      <Rectangle width="1180" height="320" color="#E6101822" />
       <Poster
         id="videoThumbnail"
         translation="[25,25]"
@@ -50,7 +51,35 @@
         height="35"
         font="font:SmallSystemFont"
         color="#9DB0C3" />
+      <Rectangle
+        translation="[25,250]"
+        width="1130"
+        height="16"
+        color="#3A4654" />
+      <Rectangle
+        id="videoProgress"
+        translation="[25,250]"
+        width="0"
+        height="16"
+        color="#67B7FF" />
+      <Label
+        id="videoTime"
+        translation="[25,275]"
+        width="1130"
+        height="40"
+        font="font:SmallSystemFont"
+        color="#FFFFFF" />
     </Group>
+
+    <Animation
+      id="videoMetadataShowAnimation"
+      duration="0.3"
+      easeFunction="outQuad">
+      <Vector2DFieldInterpolator
+        key="[0.0,1.0]"
+        keyValue="[[60.0,380.0],[60.0,60.0]]"
+        fieldToInterp="videoMetadataPanel.translation" />
+    </Animation>
 
     <Group id="audioPanel" visible="false">
       <Rectangle width="1920" height="1080" color="#0C131C" />
@@ -177,6 +206,9 @@
         m.videoTitle = m.top.findNode("videoTitle")
         m.videoDescription = m.top.findNode("videoDescription")
         m.videoLength = m.top.findNode("videoLength")
+        m.videoProgress = m.top.findNode("videoProgress")
+        m.videoTime = m.top.findNode("videoTime")
+        m.videoMetadataShowAnimation = m.top.findNode("videoMetadataShowAnimation")
         m.audioPanel = m.top.findNode("audioPanel")
         m.audioBackdrop = m.top.findNode("audioBackdrop")
         m.audioBackdrop.opacity = manifestOpacity("audio_backdrop_opacity", 0.25)
@@ -209,6 +241,7 @@
 
         m.top.observeField("playbackRequested", "startPlayback")
         m.video.observeField("state", "onVideoState")
+        m.video.observeField("position", "onVideoPositionChanged")
         m.videoTrickPlayBar.observeField("visible", "onVideoTrickPlayBarVisibilityChanged")
         m.audio.observeField("state", "onAudioState")
         m.audio.observeField("position", "onAudioPositionChanged")
@@ -562,7 +595,36 @@
         m.videoThumbnail.uri = m.activeContentThumbnail
         m.videoThumbnail.visible = (m.activeContentThumbnail <> "")
         m.videoLength.text = metadataLengthText(m.activeContentLength)
+        updateVideoProgress()
+        m.videoMetadataShowAnimation.control = "stop"
+        m.videoMetadataPanel.translation = [60, 380]
         m.videoMetadataPanel.visible = true
+        m.videoMetadataShowAnimation.control = "start"
+      end sub
+
+      sub onVideoPositionChanged()
+        if m.active and m.activePlayer = "video" and m.videoMetadataPanel.visible
+          updateVideoProgress()
+        end if
+      end sub
+
+      sub updateVideoProgress()
+        position = m.video.position
+        duration = m.video.duration
+        if position = invalid or position < 0 then position = 0
+        if duration = invalid or duration <= 0
+          duration = m.activeContentLength
+          if duration < 0 then duration = 0
+        end if
+
+        progressWidth = 0
+        if duration > 0
+          progressWidth = int(1130 * position / duration)
+          if progressWidth < 0 then progressWidth = 0
+          if progressWidth > 1130 then progressWidth = 1130
+        end if
+        m.videoProgress.width = progressWidth
+        m.videoTime.text = formatTime(position) + " / " + formatTime(duration)
       end sub
 
       sub onVideoTrickPlayBarVisibilityChanged(event as object)
@@ -574,8 +636,12 @@
       end sub
 
       sub hideVideoMetadata()
+        m.videoMetadataShowAnimation.control = "stop"
         m.videoMetadataPanel.visible = false
+        m.videoMetadataPanel.translation = [60, 380]
         m.videoThumbnail.uri = ""
+        m.videoProgress.width = 0
+        m.videoTime.text = "0:00 / 0:00"
       end sub
 
       function metadataLengthText(length as integer) as string

@@ -71,7 +71,9 @@ server to choose the next shuffled, unwatched entry. The resolver returns JSON:
 The resolver response must include string `mediaUrl` and `streamFormat` fields.
 It may also include string `title`, `description`, and HTTP(S) `thumbnail`
 fields plus a non-negative numeric `length` in seconds. The live video overlay
-and audio now-playing panel display the available metadata. A `thumbs` or
+and audio now-playing panel display the available metadata. Press OK while a
+video is playing to slide up its thumbnail, title, description, content length,
+and current playback progress. A `thumbs` or
 `thumbnails` array may replace `thumbnail`; one valid entry is selected at
 random. The selected audio thumbnail is also used as the faded full-screen
 now-playing background.
