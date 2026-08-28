@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <component name="MainScene" extends="Scene" initialFocus="tvGuide">
+  <interface>
+    <field id="closeRequested" type="boolean" value="false" />
+  </interface>
   <children>
     <TVGuide id="tvGuide" />
+    <PlaylistGuide id="playlistGuide" visible="false" />
     <Video
       id="errorStaticVideo"
       width="1920"
@@ -12,6 +16,7 @@
     <VideoComponent id="videoComponent" visible="false" />
     <ChannelCatalogTask id="catalogTask" />
     <PlaylistTask id="playlistTask" />
+    <Timer id="playlistLoadWatchdog" duration="20" repeat="false" />
   </children>
 
   <script type="text/brightscript">
@@ -19,23 +24,38 @@
       sub init()
         m.tvGuide = m.top.findNode("tvGuide")
         m.errorStaticVideo = m.top.findNode("errorStaticVideo")
+        m.playlistGuide = m.top.findNode("playlistGuide")
         m.videoComponent = m.top.findNode("videoComponent")
         m.catalogTask = m.top.findNode("catalogTask")
         m.playlistTask = m.top.findNode("playlistTask")
+        m.playlistLoadWatchdog = m.top.findNode("playlistLoadWatchdog")
 
         m.loadingDialog = invalid
         m.errorDialog = invalid
 
         m.tvGuide.observeField("channelSelected", "onChannelSelected")
+        m.tvGuide.observeField("channelBrowseRequested", "onChannelBrowseRequested")
+        m.playlistGuide.observeField("itemSelected", "onPlaylistItemSelected")
+        m.playlistGuide.observeField("closeRequested", "onPlaylistGuideClosed")
         m.catalogTask.observeField("catalog", "onCatalogLoaded")
         m.catalogTask.observeField("errorMessage", "onCatalogError")
         m.playlistTask.observeField("playlist", "onPlaylistLoaded")
         m.playlistTask.observeField("errorMessage", "onPlaylistError")
+        m.playlistLoadWatchdog.observeField("fire", "onPlaylistLoadTimeout")
         m.videoComponent.observeField("playbackEnded", "onPlaybackEnded")
 
         showLoading("Loading TV guide...")
         appInfo = createObject("roAppInfo")
         m.catalogTask.uri = appInfo.getValue("channel_catalog_url")
+        m.defaultChannel = ""
+        defaultChannelValue = appInfo.getValue("default_channel")
+        if defaultChannelValue <> invalid then m.defaultChannel = defaultChannelValue.trim()
+        m.defaultChannelBackDestination = "home"
+        backDestinationValue = appInfo.getValue("default_channel_back_destination")
+        if backDestinationValue <> invalid and LCase(backDestinationValue.trim()) = "guide"
+          m.defaultChannelBackDestination = "guide"
+        end if
+        m.defaultChannelPlayback = false
         catalogTimeout = 0
         catalogTimeoutValue = appInfo.getValue("channel_catalog_timeout_seconds")
         if catalogTimeoutValue <> invalid and catalogTimeoutValue <> ""
@@ -51,8 +71,64 @@
         if catalog = invalid then return
         closeLoading()
         m.tvGuide.content = catalog
-        m.tvGuide.setFocus(true)
+        defaultChannelIndex = findDefaultChannel(catalog, m.defaultChannel)
+        if defaultChannelIndex >= 0
+          m.defaultChannelPlayback = true
+          loadChannel(defaultChannelIndex, false)
+          return
+        end if
+        focusTvGuide()
       end sub
+
+      function findDefaultChannel(catalog as object, configuredChannel as string) as integer
+        if catalog = invalid or configuredChannel = "" then return -1
+        selector = normalizedChannelSelector(configuredChannel)
+        for index = 0 to catalog.getChildCount() - 1
+          channel = catalog.getChild(index)
+          if channel <> invalid
+            if normalizedChannelSelector(channel.title) = selector then return index
+            if normalizedChannelSelector(channel.url) = selector then return index
+            if normalizedChannelSelector(channel.playlistUrl) = selector then return index
+            if normalizedChannelSelector(channelPath(channel.url)) = selector then return index
+          end if
+        end for
+        return -1
+      end function
+
+      function normalizedChannelSelector(value as string) as string
+        normalized = value.trim()
+        transfer = createObject("roUrlTransfer")
+        normalized = transfer.unescape(normalized)
+        while normalized.len() > 0 and normalized.right(1) = "/"
+          normalized = normalized.left(normalized.len() - 1)
+        end while
+        if instr(1, normalized, "://") = 0
+          while normalized.len() > 0 and normalized.left(1) = "/"
+            normalized = normalized.mid(1)
+          end while
+        end if
+        return LCase(normalized)
+      end function
+
+      function channelPath(value as string) as string
+        normalized = value
+        queryAt = instr(1, normalized, "?")
+        if queryAt > 0 then normalized = normalized.left(queryAt - 1)
+        fragmentAt = instr(1, normalized, "#")
+        if fragmentAt > 0 then normalized = normalized.left(fragmentAt - 1)
+        while normalized.len() > 0 and normalized.right(1) = "/"
+          normalized = normalized.left(normalized.len() - 1)
+        end while
+        slashAt = 0
+        for index = normalized.len() to 1 step -1
+          if normalized.mid(index - 1, 1) = "/"
+            slashAt = index
+            exit for
+          end if
+        end for
+        if slashAt > 0 then return normalized.mid(slashAt)
+        return normalized
+      end function
 
       sub onCatalogError(event as object)
         message = event.getData()
@@ -60,51 +136,134 @@
       end sub
 
       sub onChannelSelected(event as object)
-        index = event.getData()
+        m.defaultChannelPlayback = false
+        loadChannel(event.getData(), false)
+      end sub
+
+      sub onChannelBrowseRequested(event as object)
+        m.defaultChannelPlayback = false
+        loadChannel(event.getData(), true)
+      end sub
+
+      sub loadChannel(index as integer, browseMode as boolean)
         if m.tvGuide.content = invalid then return
         channel = m.tvGuide.content.getChild(index)
         if channel = invalid then return
 
-        status = channel.status.lcase()
+        status = LCase(channel.channelStatus)
         if status = "offline" or status = "inactive" or status = "disabled"
-          showError(channel.title + " is currently " + channel.status + ".")
+          showError(channel.title + " is currently " + channel.channelStatus + ".")
           return
         end if
 
         m.selectedChannel = channel
+        m.loadingBrowseMode = browseMode
         showLoading("Loading " + channel.title + "...")
         m.playlistTask.control = "stop"
         m.playlistTask.uri = channel.playlistUrl
         m.playlistTask.playlistType = channel.playlistType
         m.playlistTask.resolverUri = channel.url
+        m.playlistTask.browseMode = browseMode
         m.playlistTask.control = "run"
+        m.playlistLoadWatchdog.control = "start"
       end sub
 
       sub onPlaylistLoaded(event as object)
         playlist = event.getData()
         if playlist = invalid or m.selectedChannel = invalid then return
+        m.playlistLoadWatchdog.control = "stop"
         closeLoading()
-        m.tvGuide.visible = false
-        m.videoComponent.visible = true
-        if m.selectedChannel.playlistType = "server-random"
-          m.videoComponent.startIndex = 0
+        m.selectedChannel.totalNumOfVideos = playlist.getChildCount()
+        totalSeconds = playlistDuration(playlist)
+        if totalSeconds >= 0
+          m.selectedChannel.totalPlaylistInMinutes = totalSeconds / 60.0
         else
-          m.videoComponent.startIndex = m.selectedChannel.currentIndex
+          m.selectedChannel.totalPlaylistInMinutes = 0
+        end if
+        if m.loadingBrowseMode
+          m.channelPlaylist = playlist
+          m.tvGuide.visible = false
+          m.playlistGuide.channelTitle = m.selectedChannel.title
+          m.playlistGuide.content = playlist
+          m.playlistGuide.visible = true
+          focusPlaylistGuide()
+          return
+        end if
+
+        m.tvGuide.visible = false
+        if m.selectedChannel.playlistType = "server-random"
+          startPlayback(playlist, 0, false, "tvGuide")
+        else
+          startPlayback(playlist, m.selectedChannel.currentIndex, false, "tvGuide")
+        end if
+      end sub
+
+      function playlistDuration(playlist as object) as integer
+        total = 0
+        for index = 0 to playlist.getChildCount() - 1
+          item = playlist.getChild(index)
+          if item = invalid or item.metadataLength < 0 then return -1
+          total += item.metadataLength
+        end for
+        return total
+      end function
+
+      sub onPlaylistItemSelected(event as object)
+        if m.channelPlaylist = invalid then return
+        startPlayback(m.channelPlaylist, event.getData(), true, "playlistGuide")
+      end sub
+
+      sub startPlayback(playlist as object, startIndex as integer, singleItem as boolean, returnTarget as string)
+        m.playbackReturnTarget = returnTarget
+        m.tvGuide.visible = false
+        m.playlistGuide.visible = false
+        m.videoComponent.visible = true
+        m.videoComponent.startIndex = startIndex
+        m.videoComponent.singleItem = singleItem
+        if m.defaultChannelPlayback and m.defaultChannelBackDestination = "home"
+          m.videoComponent.exitDestinationLabel = "Roku Home"
+        else
+          m.videoComponent.exitDestinationLabel = "TV Guide"
         end if
         m.videoComponent.channelTitle = m.selectedChannel.title
         m.videoComponent.playlist = playlist
+        m.videoComponent.playbackRequested = true
         m.videoComponent.setFocus(true)
       end sub
 
       sub onPlaylistError(event as object)
         message = event.getData()
-        if message <> "" then showApiError(message)
+        if message <> ""
+          m.playlistLoadWatchdog.control = "stop"
+          showApiError(message)
+        end if
+      end sub
+
+      sub onPlaylistLoadTimeout()
+        m.playlistTask.control = "stop"
+        showApiError("The playlist could not be loaded.")
       end sub
 
       sub onPlaybackEnded()
         m.videoComponent.visible = false
+        if m.defaultChannelPlayback and m.defaultChannelBackDestination = "home" and m.videoComponent.exitReason = "user"
+          m.top.closeRequested = true
+          return
+        end if
+        m.defaultChannelPlayback = false
+        if m.playbackReturnTarget = "playlistGuide" and m.channelPlaylist <> invalid
+          m.playlistGuide.visible = true
+          focusPlaylistGuide()
+        else
+          m.tvGuide.visible = true
+          focusTvGuide()
+        end if
+      end sub
+
+      sub onPlaylistGuideClosed()
+        m.playlistGuide.visible = false
         m.tvGuide.visible = true
-        m.tvGuide.setFocus(true)
+        focusTvGuide()
       end sub
 
       sub showLoading(title as string)
@@ -130,12 +289,14 @@
       end sub
 
       sub showApiError(message as string)
+        closeLoading()
         staticContent = createObject("roSGNode", "ContentNode")
         staticContent.url = "pkg:/tvstatic2p.mp4"
         staticContent.title = "TV static"
         staticContent.streamFormat = "mp4"
 
         m.tvGuide.visible = false
+        m.playlistGuide.visible = false
         m.videoComponent.visible = false
         m.errorStaticVideo.visible = true
         m.errorStaticVideo.content = staticContent
@@ -157,8 +318,18 @@
         if m.videoComponent.visible
           m.videoComponent.setFocus(true)
         else
-          m.tvGuide.setFocus(true)
+          focusTvGuide()
         end if
+      end sub
+
+      sub focusTvGuide()
+        m.tvGuide.setFocus(true)
+        m.tvGuide.focusRequested = true
+      end sub
+
+      sub focusPlaylistGuide()
+        m.playlistGuide.setFocus(true)
+        m.playlistGuide.focusRequested = true
       end sub
 
       function onKeyEvent(key as string, press as boolean) as boolean

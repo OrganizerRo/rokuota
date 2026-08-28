@@ -106,12 +106,12 @@
           totalPlaylistInMinutes: getFloat(channel, "totalPlaylistInMinutes"),
           currentIndex: getInteger(channel, "currentIndex"),
           tagsText: formatTags(channel),
-          status: status
+          channelStatus: status
         })
         item.url = channelUrl
         item.title = title
         item.description = getString(channel, "description")
-        item.HDPosterUrl = firstThumbnail(channel)
+        item.HDPosterUrl = randomThumbnail(channel)
         parent.appendChild(item)
       end sub
 
@@ -120,14 +120,35 @@
         return value + "/"
       end function
 
-      function firstThumbnail(channel as object) as string
-        if not channel.doesExist("thumbs") or type(channel.thumbs) <> "roArray" then return ""
-        if channel.thumbs.count() = 0 then return ""
-        return resolveCatalogUrl(channel.thumbs[0].toStr())
+      function randomThumbnail(channel as object) as string
+        candidates = []
+        keys = [ "thumbs", "thumbnails" ]
+        for each key in keys
+          if channel.doesExist(key) and type(channel[key]) = "roArray"
+            for each thumbnail in channel[key]
+              thumbnailType = type(thumbnail)
+              if (thumbnailType = "roString" or thumbnailType = "String") and thumbnail.trim() <> ""
+                candidates.push(thumbnail.trim())
+              end if
+            end for
+          else if channel.doesExist(key) and (type(channel[key]) = "roString" or type(channel[key]) = "String")
+            if channel[key].trim() <> "" then candidates.push(channel[key].trim())
+          end if
+        end for
+        if candidates.count() = 0 and channel.doesExist("thumbnail")
+          thumbnailType = type(channel.thumbnail)
+          if thumbnailType = "roString" or thumbnailType = "String"
+            if channel.thumbnail.trim() <> "" then candidates.push(channel.thumbnail.trim())
+          end if
+        end if
+        if candidates.count() = 0 then return ""
+        index = 0
+        if candidates.count() > 1 then index = Rnd(candidates.count()) - 1
+        return resolveCatalogUrl(candidates[index])
       end function
 
       function resolveCatalogUrl(value as string) as string
-        lowerUrl = value.lcase()
+        lowerUrl = LCase(value)
         if lowerUrl.left(7) = "http://" or lowerUrl.left(8) = "https://" then return value
 
         parts = m.top.uri.split("/")
@@ -138,7 +159,7 @@
       end function
 
       function normalizePlaylistType(value as string) as string
-        result = value.lcase()
+        result = LCase(value)
         if result = "m3u8" then return "m3u"
         return result
       end function

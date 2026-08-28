@@ -4,6 +4,9 @@
     <field id="playlist" type="node" />
     <field id="startIndex" type="integer" value="0" />
     <field id="channelTitle" type="string" />
+    <field id="singleItem" type="boolean" value="false" />
+    <field id="exitDestinationLabel" type="string" value="TV Guide" />
+    <field id="playbackRequested" type="boolean" alwaysNotify="true" />
     <field id="playbackEnded" type="boolean" alwaysNotify="true" />
     <field id="exitReason" type="string" />
   </interface>
@@ -14,6 +17,126 @@
       width="1920"
       height="1080"
       enableTrickPlay="true" />
+    <Audio id="audioPlayer" notificationInterval="0.5" />
+
+    <Group id="videoMetadataPanel" visible="false" translation="[60,60]">
+      <Rectangle width="1180" height="250" color="#CC000000" />
+      <Poster
+        id="videoThumbnail"
+        translation="[25,25]"
+        width="320"
+        height="200"
+        loadDisplayMode="scaleToFit" />
+      <Label
+        id="videoTitle"
+        translation="[375,22]"
+        width="770"
+        height="55"
+        font="font:MediumBoldSystemFont"
+        color="#FFFFFF" />
+      <Label
+        id="videoDescription"
+        translation="[375,80]"
+        width="770"
+        height="105"
+        wrap="true"
+        maxLines="3"
+        font="font:SmallSystemFont"
+        color="#D7E0EA" />
+      <Label
+        id="videoLength"
+        translation="[375,195]"
+        width="770"
+        height="35"
+        font="font:SmallSystemFont"
+        color="#9DB0C3" />
+    </Group>
+
+    <Group id="audioPanel" visible="false">
+      <Rectangle width="1920" height="1080" color="#0C131C" />
+      <Poster
+        id="audioBackdrop"
+        width="1920"
+        height="1080"
+        loadDisplayMode="scaleToFill"
+        visible="false" />
+      <Label
+        translation="[200,110]"
+        width="1520"
+        height="45"
+        text="NOW PLAYING"
+        font="font:MediumBoldSystemFont"
+        color="#67B7FF" />
+      <Label
+        id="audioTitle"
+        translation="[200,200]"
+        width="1520"
+        height="150"
+        wrap="true"
+        font="font:LargeBoldSystemFont"
+        color="#FFFFFF" />
+      <Label
+        id="audioState"
+        translation="[480,535]"
+        width="1520"
+        height="45"
+        font="font:MediumSystemFont"
+        color="#B7C3D0" />
+      <Poster
+        id="audioThumbnail"
+        translation="[200,375]"
+        width="240"
+        height="160"
+        loadDisplayMode="scaleToFit" />
+      <Label
+        id="audioDescription"
+        translation="[480,375]"
+        width="1240"
+        height="110"
+        wrap="true"
+        maxLines="3"
+        font="font:SmallSystemFont"
+        color="#D7E0EA" />
+      <Label
+        id="audioLength"
+        translation="[480,490]"
+        width="1240"
+        height="35"
+        font="font:SmallSystemFont"
+        color="#9DB0C3" />
+      <Rectangle
+        translation="[200,590]"
+        width="1520"
+        height="18"
+        color="#3A4654" />
+      <Rectangle
+        id="audioProgress"
+        translation="[200,590]"
+        width="0"
+        height="18"
+        color="#67B7FF" />
+      <Label
+        id="audioTime"
+        translation="[200,625]"
+        width="1520"
+        height="45"
+        font="font:MediumSystemFont"
+        color="#FFFFFF" />
+      <Label
+        id="audioVolume"
+        translation="[200,715]"
+        width="1520"
+        height="45"
+        font="font:MediumSystemFont"
+        color="#FFFFFF" />
+      <Label
+        translation="[200,850]"
+        width="1520"
+        height="45"
+        text="Play/Pause: pause or resume    Left/Right or Rewind/Fast Forward: seek 15 seconds    Back: return to guide"
+        font="font:SmallSystemFont"
+        color="#9DB0C3" />
+    </Group>
 
     <Rectangle
       id="statusPanel"
@@ -34,37 +157,77 @@
 
     <Timer id="loadWatchdog" duration="15" repeat="false" />
     <Timer id="skipTimer" duration="2" repeat="false" />
+    <Timer id="volumeRefreshTimer" duration="2" repeat="true" />
     <MediaUrlTask id="mediaUrlTask" />
+    <AudioStatusTask id="audioStatusTask" />
   </children>
 
   <script type="text/brightscript">
     <![CDATA[
       sub init()
         m.video = m.top.findNode("videoPlayer")
+        m.audio = m.top.findNode("audioPlayer")
+        m.videoTrickPlayBar = m.video.trickPlayBar
+        trickPlayBarPosition = m.videoTrickPlayBar.translation
+        if trickPlayBarPosition <> invalid and trickPlayBarPosition.count() >= 2
+          m.videoTrickPlayBar.translation = [trickPlayBarPosition[0], trickPlayBarPosition[1] - 120]
+        end if
+        m.videoMetadataPanel = m.top.findNode("videoMetadataPanel")
+        m.videoThumbnail = m.top.findNode("videoThumbnail")
+        m.videoTitle = m.top.findNode("videoTitle")
+        m.videoDescription = m.top.findNode("videoDescription")
+        m.videoLength = m.top.findNode("videoLength")
+        m.audioPanel = m.top.findNode("audioPanel")
+        m.audioBackdrop = m.top.findNode("audioBackdrop")
+        m.audioBackdrop.opacity = manifestOpacity("audio_backdrop_opacity", 0.25)
+        m.audioTitle = m.top.findNode("audioTitle")
+        m.audioThumbnail = m.top.findNode("audioThumbnail")
+        m.audioDescription = m.top.findNode("audioDescription")
+        m.audioLength = m.top.findNode("audioLength")
+        m.audioState = m.top.findNode("audioState")
+        m.audioProgress = m.top.findNode("audioProgress")
+        m.audioTime = m.top.findNode("audioTime")
+        m.audioVolume = m.top.findNode("audioVolume")
         m.statusPanel = m.top.findNode("statusPanel")
         m.statusLabel = m.top.findNode("statusLabel")
         m.loadWatchdog = m.top.findNode("loadWatchdog")
         m.skipTimer = m.top.findNode("skipTimer")
+        m.volumeRefreshTimer = m.top.findNode("volumeRefreshTimer")
         m.mediaUrlTask = m.top.findNode("mediaUrlTask")
+        m.audioStatusTask = m.top.findNode("audioStatusTask")
         m.exitDialog = createObject("roSGNode", "Dialog")
         m.exitDialog.title = "Return to TV Guide?"
         m.exitDialog.message = "The rest of this channel's playlist will not be played."
         m.exitDialog.buttons = [ "Continue Watching", "Return to Guide" ]
         m.exitDialogActive = false
         m.active = false
+        m.activePlayer = ""
+        m.resolvePending = false
+        m.itemStarted = false
+        m.failurePending = false
+        m.audioVolume.text = "Volume: unavailable"
 
-        m.top.observeField("playlist", "onPlaylistChanged")
+        m.top.observeField("playbackRequested", "startPlayback")
         m.video.observeField("state", "onVideoState")
+        m.videoTrickPlayBar.observeField("visible", "onVideoTrickPlayBarVisibilityChanged")
+        m.audio.observeField("state", "onAudioState")
+        m.audio.observeField("position", "onAudioPositionChanged")
         m.mediaUrlTask.observeField("mediaUrl", "onMediaUrlResolved")
         m.mediaUrlTask.observeField("errorMessage", "onMediaUrlError")
+        m.audioStatusTask.observeField("statusText", "onAudioStatusLoaded")
         m.loadWatchdog.observeField("fire", "onLoadTimeout")
         m.skipTimer.observeField("fire", "playNext")
+        m.volumeRefreshTimer.observeField("fire", "refreshAudioStatus")
         m.exitDialog.observeField("buttonSelected", "onExitDialogButton")
         m.exitDialog.observeField("wasClosed", "onExitDialogClosed")
       end sub
 
-      sub onPlaylistChanged()
+      sub startPlayback()
         if m.top.playlist = invalid then return
+        exitDestination = m.top.exitDestinationLabel
+        if exitDestination = "" then exitDestination = "TV Guide"
+        m.exitDialog.title = "Return to " + exitDestination + "?"
+        m.exitDialog.buttons = [ "Continue Watching", "Return to " + exitDestination ]
         count = m.top.playlist.getChildCount()
         if count = 0
           endPlayback("error")
@@ -94,15 +257,26 @@
           m.mediaUrlTask.control = "run"
           return
         end if
-        startVideo(item.url, item.title, item.streamFormat)
+        startMedia(item.url, item.title, item.streamFormat, item.description, item.HDPosterUrl, item.metadataLength)
       end sub
 
       sub onMediaUrlResolved(event as object)
         mediaUrl = event.getData()
         if not m.active or not m.resolvePending or mediaUrl = "" then return
         m.resolvePending = false
-        title = m.top.channelTitle + " - Program " + (m.currentIndex + 1).toStr()
-        startVideo(mediaUrl, title, mediaFormat(mediaUrl))
+        item = m.top.playlist.getChild(m.currentIndex)
+        title = m.mediaUrlTask.mediaTitle
+        if title = "" and item <> invalid then title = item.title
+        if title = "" then title = m.top.channelTitle + " - Program " + (m.currentIndex + 1).toStr()
+        description = m.mediaUrlTask.mediaDescription
+        thumbnail = m.mediaUrlTask.mediaThumbnail
+        length = m.mediaUrlTask.mediaLength
+        if item <> invalid
+          if description = "" then description = item.description
+          if thumbnail = "" then thumbnail = item.HDPosterUrl
+          if length < 0 then length = item.metadataLength
+        end if
+        startMedia(mediaUrl, title, m.mediaUrlTask.streamFormat, description, thumbnail, length)
       end sub
 
       sub onMediaUrlError(event as object)
@@ -112,49 +286,116 @@
         skipFailedItem(message)
       end sub
 
-      sub startVideo(url as string, title as string, streamFormat as string)
+      sub startMedia(url as string, title as string, streamFormat as string, description as string, thumbnail as string, length as integer)
         m.itemStarted = false
         m.failurePending = false
         content = createObject("roSGNode", "ContentNode")
         content.url = url
-        content.title = title
+        if isAudioUrl(url)
+          content.title = cleanMediaTitle(title)
+        else
+          content.title = title
+        end if
         content.streamFormat = streamFormat
+        content.description = description
+        content.HDPosterUrl = thumbnail
         content.httpCertificatesFile = "common:/certs/ca-bundle.crt"
+        m.activeContentTitle = content.title
+        m.activeContentDescription = description
+        m.activeContentThumbnail = thumbnail
+        m.activeContentLength = length
 
         showStatus("Loading " + content.title + "  (" + (m.currentIndex + 1).toStr() + " of " + m.top.playlist.getChildCount().toStr() + ")")
-        m.video.content = content
-        m.video.control = "play"
+        if isAudioUrl(url)
+          m.activePlayer = "audio"
+          m.video.control = "stop"
+          hideVideoMetadata()
+          showAudioPanel(content.title, "Loading")
+          m.audio.autoplayAfterSeek = true
+          m.audio.content = content
+          m.audio.control = "play"
+          refreshAudioStatus()
+          m.volumeRefreshTimer.control = "start"
+          m.top.setFocus(true)
+        else
+          m.activePlayer = "video"
+          hideAudioPanel()
+          hideVideoMetadata()
+          m.audio.control = "stop"
+          m.volumeRefreshTimer.control = "stop"
+          m.video.content = content
+          m.video.control = "play"
+          m.video.setFocus(true)
+        end if
         m.loadWatchdog.control = "start"
-        m.video.setFocus(true)
       end sub
 
-      function mediaFormat(url as string) as string
+      function extensionFromUrl(url as string) as string
         cleanUrl = url
         queryAt = instr(1, cleanUrl, "?")
         if queryAt > 0 then cleanUrl = cleanUrl.left(queryAt - 1)
+        fragmentAt = instr(1, cleanUrl, "#")
+        if fragmentAt > 0 then cleanUrl = cleanUrl.left(fragmentAt - 1)
         extension = ""
         for index = len(cleanUrl) to 1 step -1
           character = cleanUrl.mid(index - 1, 1)
           if character = "."
-            extension = cleanUrl.mid(index).lcase()
+            extension = LCase(cleanUrl.mid(index))
             exit for
           end if
           if character = "/" then exit for
         end for
-        if extension = "m3u8" then return "hls"
-        if extension = "mpd" then return "dash"
-        if extension = "ism" or extension = "isml" then return "ism"
-        if extension = "" then return "mp4"
         return extension
       end function
 
+      function isAudioUrl(url as string) as boolean
+        extension = extensionFromUrl(url)
+        return extension = "mp3" or extension = "m4a" or extension = "wav" or extension = "aac"
+      end function
+
+      function cleanMediaTitle(title as string) as string
+        cleanTitle = title
+
+        queryAt = instr(1, cleanTitle, "?")
+        if queryAt > 0 then cleanTitle = cleanTitle.left(queryAt - 1)
+        fragmentAt = instr(1, cleanTitle, "#")
+        if fragmentAt > 0 then cleanTitle = cleanTitle.left(fragmentAt - 1)
+
+        for index = len(cleanTitle) to 1 step -1
+          character = cleanTitle.mid(index - 1, 1)
+          if character = "/" or character = "\"
+            cleanTitle = cleanTitle.mid(index)
+            exit for
+          end if
+        end for
+        if cleanTitle = "" then return title
+        return cleanTitle
+      end function
+
       sub onVideoState(event as object)
-        if not m.active then return
-        state = event.getData()
+        if not m.active or m.activePlayer <> "video" then return
+        onPlayerState(event.getData(), m.video)
+      end sub
+
+      sub onAudioState(event as object)
+        if not m.active or m.activePlayer <> "audio" then return
+        onPlayerState(event.getData(), m.audio)
+      end sub
+
+      sub onPlayerState(state as string, player as object)
         if state = "playing"
           m.itemStarted = true
           m.loadWatchdog.control = "stop"
-          hideStatus()
+          if m.activePlayer = "video"
+            hideStatus()
+          else
+            hideStatus()
+            showAudioPanel(m.activeContentTitle, "Playing")
+            updateAudioProgress()
+          end if
+        else if state = "paused" and m.activePlayer = "audio"
+          showAudioPanel(m.activeContentTitle, "Paused")
+          updateAudioProgress()
         else if state = "finished"
           if not m.itemStarted then return
           m.itemStarted = false
@@ -162,21 +403,26 @@
           playNext()
         else if state = "error"
           m.loadWatchdog.control = "stop"
-          skipFailedItem(playbackErrorMessage())
+          skipFailedItem(playbackErrorMessage(player))
         end if
       end sub
 
       sub onLoadTimeout()
         if not m.active then return
-        if m.video.state = "playing" then return
-        m.video.control = "stop"
+        player = activePlayerNode()
+        if player <> invalid and player.state = "playing" then return
+        if player <> invalid then player.control = "stop"
         skipFailedItem("This playlist item timed out.")
       end sub
 
       sub skipFailedItem(message as string)
         if not m.active or m.failurePending then return
         m.failurePending = true
-        showStatus(message + " Skipping to the next item...")
+        if m.top.singleItem
+          showStatus(message + " Returning to the program guide...")
+        else
+          showStatus(message + " Skipping to the next item...")
+        end if
         m.skipTimer.control = "start"
       end sub
 
@@ -184,6 +430,10 @@
         if not m.active then return
         m.skipTimer.control = "stop"
         m.failurePending = false
+        if m.top.singleItem
+          endPlayback("finished")
+          return
+        end if
         m.currentIndex++
         if m.currentIndex >= m.top.playlist.getChildCount()
           endPlayback("finished")
@@ -192,23 +442,175 @@
         end if
       end sub
 
-      function playbackErrorMessage() as string
-        if m.video.errorMsg <> invalid and m.video.errorMsg <> "" then return m.video.errorMsg + "."
-        if m.video.errorStr <> invalid and m.video.errorStr <> "" then return m.video.errorStr + "."
+      function activePlayerNode() as object
+        if m.activePlayer = "audio" then return m.audio
+        if m.activePlayer = "video" then return m.video
+        return invalid
+      end function
+
+      function playbackErrorMessage(player as object) as string
+        if player <> invalid and player.errorMsg <> invalid and player.errorMsg <> "" then return player.errorMsg + "."
+        if player <> invalid and player.errorStr <> invalid and player.errorStr <> "" then return player.errorStr + "."
         return "This playlist item could not be played."
       end function
 
       function onKeyEvent(key as string, press as boolean) as boolean
         if not press then return false
         if key = "back" and m.active
+          if m.top.singleItem
+            endPlayback("user")
+            return true
+          end if
           if not m.exitDialogActive
             m.exitDialogActive = true
             m.top.getScene().dialog = m.exitDialog
           end if
           return true
         end if
+        if m.active and m.activePlayer = "audio" and key = "play"
+          if m.audio.state = "paused"
+            m.audio.autoplayAfterSeek = true
+            m.audio.control = "resume"
+          else if m.audio.state = "playing"
+            m.audio.control = "pause"
+          end if
+          return true
+        end if
+        if m.active and m.activePlayer = "audio" and key = "rewind"
+          return seekAudio(-15)
+        end if
+        if m.active and m.activePlayer = "audio" and key = "fastforward"
+          return seekAudio(15)
+        end if
+        if m.active and m.activePlayer = "audio" and key = "left"
+          return seekAudio(-15)
+        end if
+        if m.active and m.activePlayer = "audio" and key = "right"
+          return seekAudio(15)
+        end if
         return false
       end function
+
+      function seekAudio(offset as integer) as boolean
+        position = m.audio.position
+        duration = m.audio.duration
+        if position = invalid or duration = invalid or duration <= 0 then return false
+
+        targetPosition = position + offset
+        if targetPosition < 0 then targetPosition = 0
+        if targetPosition > duration then targetPosition = duration
+        m.audio.autoplayAfterSeek = (m.audio.state = "playing")
+        m.audio.seek = targetPosition
+        updateAudioProgressAt(targetPosition, duration)
+        return true
+      end function
+
+      sub onAudioPositionChanged()
+        if m.active and m.activePlayer = "audio" then updateAudioProgress()
+      end sub
+
+      sub updateAudioProgress()
+        updateAudioProgressAt(m.audio.position, m.audio.duration)
+      end sub
+
+      sub updateAudioProgressAt(position as dynamic, duration as dynamic)
+        if position = invalid or position < 0 then position = 0
+        if duration = invalid or duration <= 0
+          duration = m.activeContentLength
+          if duration < 0 then duration = 0
+        end if
+
+        progressWidth = 0
+        if duration > 0
+          progressWidth = int(1520 * position / duration)
+          if progressWidth < 0 then progressWidth = 0
+          if progressWidth > 1520 then progressWidth = 1520
+        end if
+        m.audioProgress.width = progressWidth
+        m.audioTime.text = formatTime(position) + " / " + formatTime(duration)
+      end sub
+
+      function formatTime(value as dynamic) as string
+        if value = invalid or value < 0 then value = 0
+        totalSeconds = int(value)
+        hours = int(totalSeconds / 3600)
+        minutes = int((totalSeconds mod 3600) / 60)
+        seconds = totalSeconds mod 60
+        secondsText = seconds.toStr()
+        if seconds < 10 then secondsText = "0" + secondsText
+        minutesText = minutes.toStr()
+        if hours > 0 and minutes < 10 then minutesText = "0" + minutesText
+        if hours > 0 then return hours.toStr() + ":" + minutesText + ":" + secondsText
+        return minutesText + ":" + secondsText
+      end function
+
+      sub showAudioPanel(title as string, state as string)
+        m.audioTitle.text = title
+        m.audioBackdrop.uri = m.activeContentThumbnail
+        m.audioBackdrop.visible = (m.activeContentThumbnail <> "")
+        m.audioDescription.text = m.activeContentDescription
+        m.audioThumbnail.uri = m.activeContentThumbnail
+        m.audioThumbnail.visible = (m.activeContentThumbnail <> "")
+        m.audioLength.text = metadataLengthText(m.activeContentLength)
+        m.audioState.text = state + "  |  Track " + (m.currentIndex + 1).toStr() + " of " + m.top.playlist.getChildCount().toStr()
+        m.audioPanel.visible = true
+      end sub
+
+      sub showVideoMetadata()
+        m.videoTitle.text = m.activeContentTitle
+        m.videoDescription.text = m.activeContentDescription
+        m.videoThumbnail.uri = m.activeContentThumbnail
+        m.videoThumbnail.visible = (m.activeContentThumbnail <> "")
+        m.videoLength.text = metadataLengthText(m.activeContentLength)
+        m.videoMetadataPanel.visible = true
+      end sub
+
+      sub onVideoTrickPlayBarVisibilityChanged(event as object)
+        if m.active and m.activePlayer = "video" and event.getData()
+          showVideoMetadata()
+        else
+          hideVideoMetadata()
+        end if
+      end sub
+
+      sub hideVideoMetadata()
+        m.videoMetadataPanel.visible = false
+        m.videoThumbnail.uri = ""
+      end sub
+
+      function metadataLengthText(length as integer) as string
+        if length < 0 then return ""
+        return "Length: " + formatTime(length)
+      end function
+
+      sub hideAudioPanel()
+        m.audioPanel.visible = false
+        m.audioBackdrop.visible = false
+        m.audioBackdrop.uri = ""
+        m.audioProgress.width = 0
+        m.audioTime.text = "0:00 / 0:00"
+      end sub
+
+      function manifestOpacity(key as string, fallback as float) as float
+        appInfo = createObject("roAppInfo")
+        text = appInfo.getValue(key)
+        if text = invalid or text = "" then return fallback
+        value = text.toFloat()
+        if value < 0 then return 0
+        if value > 1 then return 1
+        return value
+      end function
+
+      sub refreshAudioStatus()
+        if not m.active or m.activePlayer <> "audio" then return
+        m.audioStatusTask.control = "stop"
+        m.audioStatusTask.control = "run"
+      end sub
+
+      sub onAudioStatusLoaded(event as object)
+        statusText = event.getData()
+        if statusText <> "" then m.audioVolume.text = statusText
+      end sub
 
       sub onExitDialogButton(event as object)
         choice = event.getData()
@@ -218,7 +620,13 @@
 
       sub onExitDialogClosed()
         m.exitDialogActive = false
-        if m.active then m.video.setFocus(true)
+        if m.active
+          if m.activePlayer = "video"
+            m.video.setFocus(true)
+          else
+            m.top.setFocus(true)
+          end if
+        end if
       end sub
 
       sub showStatus(message as string)
@@ -237,10 +645,16 @@
         m.resolvePending = false
         m.itemStarted = false
         m.failurePending = false
+        m.activePlayer = ""
         m.mediaUrlTask.control = "stop"
         m.loadWatchdog.control = "stop"
         m.skipTimer.control = "stop"
+        m.volumeRefreshTimer.control = "stop"
+        m.audioStatusTask.control = "stop"
         m.video.control = "stop"
+        m.audio.control = "stop"
+        hideAudioPanel()
+        hideVideoMetadata()
         hideStatus()
         if m.exitDialogActive
           m.exitDialogActive = false

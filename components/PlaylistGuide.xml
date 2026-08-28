@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="PlaylistGuide" extends="Group" initialFocus="itemGrid">
+  <interface>
+    <field id="content" type="node" />
+    <field id="channelTitle" type="string" />
+    <field id="itemSelected" type="integer" alwaysNotify="true" />
+    <field id="closeRequested" type="boolean" alwaysNotify="true" />
+    <field id="focusRequested" type="boolean" alwaysNotify="true" />
+  </interface>
+
+  <children>
+    <Rectangle width="1920" height="1080" color="#0C131C" />
+    <Poster
+      id="guideBackdrop"
+      width="1920"
+      height="1080"
+      loadDisplayMode="scaleToFill"
+      visible="false" />
+    <Group id="guideForeground">
+      <Label
+        id="heading"
+        translation="[110,55]"
+        width="1700"
+        height="60"
+        font="font:LargeBoldSystemFont"
+        color="#FFFFFF" />
+      <Label
+        translation="[110,120]"
+        width="1700"
+        height="36"
+        text="Choose a program to play    Back: return to channels"
+        font="font:MediumSystemFont"
+        color="#9DB0C3" />
+      <MarkupGrid
+        id="itemGrid"
+        translation="[110,180]"
+        itemSize="[1700,130]"
+        itemSpacing="[0,8]"
+        numColumns="1"
+        numRows="6"
+        drawFocusFeedback="true"
+        vertFocusAnimationStyle="floatingFocus"
+        itemComponentName="VideoItemComponent" />
+    </Group>
+  </children>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.heading = m.top.findNode("heading")
+        m.itemGrid = m.top.findNode("itemGrid")
+        m.guideBackdrop = m.top.findNode("guideBackdrop")
+        m.guideBackdrop.opacity = manifestOpacity("guide_backdrop_opacity", 0.25)
+        m.top.findNode("guideForeground").opacity = manifestOpacity("guide_foreground_opacity", 1.0)
+        m.top.observeField("content", "onContentChanged")
+        m.top.observeField("channelTitle", "onChannelTitleChanged")
+        m.top.observeField("focusRequested", "focusGuide")
+        m.itemGrid.observeField("itemSelected", "onItemSelected")
+        m.itemGrid.observeField("itemFocused", "onItemFocused")
+      end sub
+
+      sub onContentChanged()
+        m.itemGrid.content = m.top.content
+        updateBackdrop(0)
+      end sub
+
+      sub onChannelTitleChanged()
+        m.heading.text = m.top.channelTitle + " Programs"
+      end sub
+
+      sub onItemSelected(event as object)
+        position = event.getData()
+        if type(position) = "roArray"
+          m.top.itemSelected = position[0] * m.itemGrid.numColumns + position[1]
+        else
+          m.top.itemSelected = position
+        end if
+      end sub
+
+      sub onItemFocused(event as object)
+        position = event.getData()
+        if type(position) = "roArray"
+          index = position[0] * m.itemGrid.numColumns + position[1]
+        else
+          index = position
+        end if
+        updateBackdrop(index)
+      end sub
+
+      sub updateBackdrop(index as integer)
+        if m.top.content = invalid or index < 0 or index >= m.top.content.getChildCount()
+          m.guideBackdrop.visible = false
+          m.guideBackdrop.uri = ""
+          return
+        end if
+        item = m.top.content.getChild(index)
+        if item = invalid or item.HDPosterUrl = ""
+          m.guideBackdrop.visible = false
+          m.guideBackdrop.uri = ""
+          return
+        end if
+        m.guideBackdrop.uri = item.HDPosterUrl
+        m.guideBackdrop.visible = true
+      end sub
+
+      function manifestOpacity(key as string, fallback as float) as float
+        appInfo = createObject("roAppInfo")
+        text = appInfo.getValue(key)
+        if text = invalid or text = "" then return fallback
+        value = text.toFloat()
+        if value < 0 then return 0
+        if value > 1 then return 1
+        return value
+      end function
+
+      sub focusGuide()
+        m.itemGrid.setFocus(true)
+      end sub
+
+      function onKeyEvent(key as string, press as boolean) as boolean
+        if press and key = "back"
+          m.top.closeRequested = true
+          return true
+        end if
+        return false
+      end function
+    ]]>
+  </script>
+</component>

@@ -4,6 +4,7 @@
     <field id="uri" type="string" />
     <field id="playlistType" type="string" />
     <field id="resolverUri" type="string" />
+    <field id="browseMode" type="boolean" value="false" />
     <field id="timeoutSeconds" type="integer" value="15" />
     <field id="playlist" type="node" />
     <field id="errorMessage" type="string" />
@@ -23,7 +24,7 @@
           return
         end if
 
-        playlistType = m.top.playlistType.lcase()
+        playlistType = LCase(m.top.playlistType)
         if playlistType = ""
           playlistType = extensionFromUrl(m.top.uri)
         end if
@@ -88,25 +89,104 @@
 
         for index = 0 to envelope.items.count() - 1
           item = createObject("roSGNode", "ContentNode")
-          item.addFields({ resolveUrl: m.top.resolverUri })
-          item.title = "Shuffled program " + (index + 1).toStr()
+          serverItem = envelope.items[index]
+          if m.top.browseMode
+            resolverIndex = index
+            if type(serverItem) = "roAssociativeArray" and serverItem.doesExist("index")
+              indexType = type(serverItem.index)
+              if indexType = "Integer"
+                resolverIndex = serverItem.index
+              else if indexType = "roString" or indexType = "String"
+                resolverIndex = serverItem.index.toInt()
+              end if
+            end if
+            item.addFields({
+              resolveUrl: ensureTrailingSlash(m.top.resolverUri) + resolverIndex.toStr()
+              metadataLength: jsonInteger(serverItem, "length", -1)
+            })
+            item.title = jsonString(serverItem, "title")
+            item.url = jsonString(serverItem, "url")
+            item.description = jsonString(serverItem, "description")
+            if item.title = "" then item.title = item.url
+            if item.description = "" then item.description = jsonString(envelope, "channel")
+          else
+            item.addFields({ resolveUrl: m.top.resolverUri, metadataLength: -1 })
+            item.title = "Shuffled program " + (index + 1).toStr()
+          end if
+          item.streamFormat = jsonString(serverItem, "streamFormat")
+          item.HDPosterUrl = jsonThumbnail(serverItem)
+          item.httpCertificatesFile = "common:/certs/ca-bundle.crt"
           playlist.appendChild(item)
         end for
         return playlist
       end function
 
+      function jsonString(value as dynamic, key as string) as string
+        if type(value) <> "roAssociativeArray" or not value.doesExist(key) then return ""
+        fieldType = type(value[key])
+        if fieldType = "roString" or fieldType = "String"
+          return value[key].trim()
+        end if
+        return ""
+      end function
+
+      function jsonInteger(value as dynamic, key as string, fallback as integer) as integer
+        if type(value) <> "roAssociativeArray" or not value.doesExist(key) then return fallback
+        fieldType = type(value[key])
+        if fieldType = "Integer" or fieldType = "LongInteger" or fieldType = "Float" or fieldType = "Double"
+          return int(value[key])
+        end if
+        return fallback
+      end function
+
+      function jsonThumbnail(value as dynamic) as string
+        if type(value) <> "roAssociativeArray" then return ""
+        candidates = []
+        keys = [ "thumbs", "thumbnails" ]
+        for each key in keys
+          if value.doesExist(key) and type(value[key]) = "roArray"
+            for each thumbnail in value[key]
+              thumbnailType = type(thumbnail)
+              if (thumbnailType = "roString" or thumbnailType = "String") and thumbnail.trim() <> ""
+                candidates.push(thumbnail.trim())
+              end if
+            end for
+          else if value.doesExist(key) and (type(value[key]) = "roString" or type(value[key]) = "String")
+            if value[key].trim() <> "" then candidates.push(value[key].trim())
+          end if
+        end for
+        if candidates.count() = 0
+          thumbnail = jsonString(value, "thumbnail")
+          if thumbnail <> "" then candidates.push(thumbnail)
+        end if
+        if candidates.count() = 0 then return ""
+        index = 0
+        if candidates.count() > 1 then index = Rnd(candidates.count()) - 1
+        return resolveEntryUrl(candidates[index])
+      end function
+
+      function ensureTrailingSlash(value as string) as string
+        if value = "" or value.right(1) = "/" then return value
+        return value + "/"
+      end function
+
       function parseM3u(text as string) as object
         playlist = createObject("roSGNode", "ContentNode")
         pendingTitle = ""
+        pendingLength = -1
         lines = text.split(chr(10))
         for each rawLine in lines
           line = cleanLine(rawLine)
-          if line.left(8).ucase() = "#EXTINF:"
+          if UCase(line.left(8)) = "#EXTINF:"
             comma = instr(1, line, ",")
-            if comma > 0 then pendingTitle = line.mid(comma)
+            if comma > 0
+              pendingTitle = line.mid(comma)
+              pendingLength = line.mid(8, comma - 9).toInt()
+            end if
           else if line <> "" and line.left(1) <> "#"
-            appendEntry(playlist, line, pendingTitle)
+            appendEntry(playlist, line, pendingTitle, "", "", pendingLength)
             pendingTitle = ""
+            pendingLength = -1
           end if
         end for
         return playlist
@@ -116,13 +196,20 @@
         playlist = createObject("roSGNode", "ContentNode")
         files = {}
         titles = {}
+        descriptions = {}
+        lengths = {}
+        commentTitles = {}
+        commentDescriptions = {}
+        commentThumbnails = {}
+        commentLengths = {}
+        commentDurationLengths = {}
         maxIndex = 0
 
         for each rawLine in text.split(chr(10))
           line = cleanLine(rawLine)
           equalsAt = instr(1, line, "=")
           if equalsAt > 1
-            key = line.left(equalsAt - 1).lcase()
+            key = LCase(line.left(equalsAt - 1))
             value = line.mid(equalsAt)
             if key.left(4) = "file"
               index = key.mid(4).toInt()
@@ -131,6 +218,27 @@
             else if key.left(5) = "title"
               index = key.mid(5).toInt()
               titles[index.toStr()] = value
+            else if key.left(11) = "description"
+              index = key.mid(11).toInt()
+              descriptions[index.toStr()] = value
+            else if key.left(6) = "length"
+              index = key.mid(6).toInt()
+              lengths[index.toStr()] = value.toInt()
+            else if key.left(7) = "comment" and key.right(9) = "_duration"
+              index = key.left(key.len() - 9).mid(7).toInt()
+              duration = parseDuration(value)
+              if duration >= 0 then commentDurationLengths[index.toStr()] = duration
+            else if key.left(7) = "comment"
+              index = key.mid(7).toInt()
+              itemKey = index.toStr()
+              commentTitle = commentField(value, "Title: ", " | Duration: ")
+              commentDescription = commentField(value, " | Description: ", " | Thumbnail: ")
+              commentThumbnail = commentField(value, " | Thumbnail: ", "")
+              commentLength = parseDuration(commentField(value, " | Duration: ", " | Description: "))
+              if commentTitle <> "" then commentTitles[itemKey] = commentTitle
+              if commentDescription <> "" then commentDescriptions[itemKey] = commentDescription
+              if commentThumbnail <> "" then commentThumbnails[itemKey] = commentThumbnail
+              if commentLength >= 0 then commentLengths[itemKey] = commentLength
             end if
           end if
         end for
@@ -140,18 +248,73 @@
           if files.doesExist(key)
             title = ""
             if titles.doesExist(key) then title = titles[key]
-            appendEntry(playlist, files[key], title)
+            if title = "" and commentTitles.doesExist(key) then title = commentTitles[key]
+            description = ""
+            if descriptions.doesExist(key) then description = descriptions[key]
+            if description = "" and commentDescriptions.doesExist(key) then description = commentDescriptions[key]
+            thumbnail = ""
+            if commentThumbnails.doesExist(key) then thumbnail = commentThumbnails[key]
+            length = -1
+            if lengths.doesExist(key)
+              length = lengths[key]
+            else if commentDurationLengths.doesExist(key)
+              length = commentDurationLengths[key]
+            else if commentLengths.doesExist(key)
+              length = commentLengths[key]
+            end if
+            appendEntry(playlist, files[key], title, description, thumbnail, length)
           end if
         end for
         return playlist
       end function
 
-      sub appendEntry(parent as object, url as string, title as string)
+      function commentField(comment as string, label as string, nextLabel as string) as string
+        startAt = instr(1, comment, label)
+        if startAt = 0 then return ""
+        valueAt = startAt + label.len()
+        if nextLabel = "" then return comment.mid(valueAt - 1).trim()
+        endAt = instr(valueAt, comment, nextLabel)
+        if endAt = 0 then return comment.mid(valueAt - 1).trim()
+        return comment.mid(valueAt - 1, endAt - valueAt).trim()
+      end function
+
+      function parseDuration(value as string) as integer
+        if value = "" or LCase(value) = "unknown" then return -1
+        parts = value.split(":")
+        if parts.count() = 2
+          if not isDigits(parts[0]) or not isDigits(parts[1]) then return -1
+          minutes = parts[0].toInt()
+          seconds = parts[1].toInt()
+          if seconds >= 60 then return -1
+          return minutes * 60 + seconds
+        else if parts.count() = 3
+          if not isDigits(parts[0]) or not isDigits(parts[1]) or not isDigits(parts[2]) then return -1
+          hours = parts[0].toInt()
+          minutes = parts[1].toInt()
+          seconds = parts[2].toInt()
+          if minutes >= 60 or seconds >= 60 then return -1
+          return hours * 3600 + minutes * 60 + seconds
+        end if
+        return -1
+      end function
+
+      function isDigits(value as string) as boolean
+        if value = "" then return false
+        for index = 0 to value.len() - 1
+          character = value.mid(index, 1)
+          if character < "0" or character > "9" then return false
+        end for
+        return true
+      end function
+
+      sub appendEntry(parent as object, url as string, title as string, description as string, thumbnail as string, length as integer)
         item = createObject("roSGNode", "ContentNode")
-        item.addFields({ resolveUrl: "" })
+        item.addFields({ resolveUrl: "", metadataLength: length })
         item.url = resolveEntryUrl(url)
         item.title = title
         if item.title = "" then item.title = "Playlist item " + (parent.getChildCount() + 1).toStr()
+        item.description = description
+        if thumbnail <> "" then item.HDPosterUrl = resolveEntryUrl(thumbnail)
         item.streamFormat = mediaFormat(url)
         item.httpCertificatesFile = "common:/certs/ca-bundle.crt"
         parent.appendChild(item)
@@ -159,7 +322,7 @@
 
       function resolveEntryUrl(value as string) as string
         entryUrl = cleanLine(value)
-        lowerUrl = entryUrl.lcase()
+        lowerUrl = LCase(entryUrl)
         if lowerUrl.left(7) = "http://" or lowerUrl.left(8) = "https://" then return entryUrl
 
         baseUrl = m.top.uri
@@ -190,6 +353,8 @@
         if extension = "m3u8" then return "hls"
         if extension = "mpd" then return "dash"
         if extension = "ism" or extension = "isml" then return "ism"
+        if extension = "m4a" then return "mp4"
+        if extension = "wav" then return "pcm"
         if extension = "" then return "mp4"
         return extension
       end function
@@ -209,7 +374,7 @@
           if cleanUrl.mid(index - 1, 1) = "/" then exit for
         end for
         if dotAt = 0 then return ""
-        return cleanUrl.mid(dotAt).lcase()
+        return LCase(cleanUrl.mid(dotAt))
       end function
 
       function cleanLine(value as string) as string

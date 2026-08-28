@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="AudioStatusTask" extends="Task">
+  <interface>
+    <field id="statusText" type="string" alwaysNotify="true" />
+  </interface>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.top.functionName = "loadAudioStatus"
+      end sub
+
+      sub loadAudioStatus()
+        m.top.statusText = "Volume: unavailable"
+        deviceInfo = createObject("roDeviceInfo")
+        addresses = deviceInfo.getIPAddrs()
+        if type(addresses) <> "roAssociativeArray" then return
+
+        deviceIp = ""
+        for each interfaceName in addresses
+          candidate = addresses[interfaceName]
+          if candidate <> invalid and candidate.toStr() <> ""
+            deviceIp = candidate.toStr()
+            exit for
+          end if
+        end for
+        if deviceIp = "" then return
+
+        transfer = createObject("roUrlTransfer")
+        transfer.setUrl("http://" + deviceIp + ":8060/query/audio-device")
+        port = createObject("roMessagePort")
+        transfer.setMessagePort(port)
+        if not transfer.asyncGetToString() then return
+
+        event = wait(2000, port)
+        if event = invalid or type(event) <> "roUrlEvent"
+          transfer.asyncCancel()
+          return
+        end if
+        if event.getResponseCode() < 200 or event.getResponseCode() >= 300 then return
+
+        body = event.getString()
+        volume = elementText(body, "volume")
+        muted = LCase(elementText(body, "muted"))
+        if muted = "true"
+          m.top.statusText = "Volume: muted"
+        else if volume <> ""
+          m.top.statusText = "Volume: " + volume + "%"
+        end if
+      end sub
+
+      function elementText(text as string, name as string) as string
+        openTag = "<" + name + ">"
+        closeTag = "</" + name + ">"
+        startAt = instr(1, text, openTag)
+        if startAt = 0 then return ""
+        valueStart = startAt + len(openTag)
+        endAt = instr(valueStart, text, closeTag)
+        if endAt = 0 then return ""
+        return text.mid(valueStart - 1, endAt - valueStart)
+      end function
+    ]]>
+  </script>
+</component>

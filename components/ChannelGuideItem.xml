@@ -5,7 +5,7 @@
   </interface>
 
   <children>
-    <Rectangle width="1700" height="118" color="#182331" />
+    <Rectangle id="itemBackground" width="1700" height="118" color="#182331" />
     <Rectangle id="statusStripe" width="10" height="118" color="#36C275" />
 
     <Label
@@ -46,6 +46,8 @@
   <script type="text/brightscript">
     <![CDATA[
       sub init()
+        m.itemBackground = m.top.findNode("itemBackground")
+        m.itemBackground.opacity = manifestOpacity("guide_item_opacity", 0.8)
         m.channelTitle = m.top.findNode("channelTitle")
         m.description = m.top.findNode("description")
         m.playlistSummary = m.top.findNode("playlistSummary")
@@ -53,6 +55,16 @@
         m.statusStripe = m.top.findNode("statusStripe")
         m.top.observeField("itemContent", "onContentChanged")
       end sub
+
+      function manifestOpacity(key as string, fallback as float) as float
+        appInfo = createObject("roAppInfo")
+        text = appInfo.getValue(key)
+        if text = invalid or text = "" then return fallback
+        value = text.toFloat()
+        if value < 0 then return 0
+        if value > 1 then return 1
+        return value
+      end function
 
       sub onContentChanged()
         item = m.top.itemContent
@@ -63,6 +75,13 @@
 
         if item.playlistType = "server-random"
           countText = "Shuffled playlist"
+          if item.totalNumOfVideos > 0
+            countText = item.totalNumOfVideos.toStr() + " videos"
+            if item.totalPlaylistInMinutes > 0
+              countText += "  |  " + int(item.totalPlaylistInMinutes).toStr() + " min"
+            end if
+            countText += "  |  Shuffled"
+          end if
         else
           countText = item.totalNumOfVideos.toStr() + " videos"
           if item.totalPlaylistInMinutes > 0
@@ -75,13 +94,13 @@
         if item.playlistType = "server-random"
           detail = "EXPLORE2EXPRESS"
         else
-          detail = item.playlistType.ucase()
+          detail = UCase(item.playlistType)
         end if
         if item.tagsText <> "" then detail += "  |  " + item.tagsText
-        if item.status <> "" then detail += "  |  " + item.status
+        if item.channelStatus <> "" then detail += "  |  " + item.channelStatus
         m.tags.text = detail
 
-        status = item.status.lcase()
+        status = LCase(item.channelStatus)
         if status = "offline" or status = "inactive" or status = "disabled"
           m.statusStripe.color = "#D94A4A"
         else
