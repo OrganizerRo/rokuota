@@ -6,6 +6,7 @@
     <field id="itemSelected" type="integer" alwaysNotify="true" />
     <field id="closeRequested" type="boolean" alwaysNotify="true" />
     <field id="focusRequested" type="boolean" alwaysNotify="true" />
+    <field id="menuRequested" type="boolean" alwaysNotify="true" />
   </interface>
 
   <children>
@@ -118,8 +119,13 @@
       end sub
 
       function onKeyEvent(key as string, press as boolean) as boolean
-        if press and key = "back"
+        if not press then return false
+        if key = "back"
           m.top.closeRequested = true
+          return true
+        end if
+        if key = "left"
+          m.top.menuRequested = true
           return true
         end if
         return false

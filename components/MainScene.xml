@@ -14,6 +14,8 @@
       loop="true"
       enableTrickPlay="false" />
     <VideoComponent id="videoComponent" visible="false" />
+    <SideMenu id="sideMenu" visible="false" />
+    <SettingsView id="settingsView" visible="false" />
     <ChannelCatalogTask id="catalogTask" />
     <PlaylistTask id="playlistTask" />
     <Timer id="playlistLoadWatchdog" duration="20" repeat="false" />
@@ -26,17 +28,26 @@
         m.errorStaticVideo = m.top.findNode("errorStaticVideo")
         m.playlistGuide = m.top.findNode("playlistGuide")
         m.videoComponent = m.top.findNode("videoComponent")
+        m.sideMenu = m.top.findNode("sideMenu")
+        m.settingsView = m.top.findNode("settingsView")
         m.catalogTask = m.top.findNode("catalogTask")
         m.playlistTask = m.top.findNode("playlistTask")
         m.playlistLoadWatchdog = m.top.findNode("playlistLoadWatchdog")
 
         m.loadingDialog = invalid
         m.errorDialog = invalid
+        m.menuReturnTarget = "tvGuide"
 
         m.tvGuide.observeField("channelSelected", "onChannelSelected")
         m.tvGuide.observeField("channelBrowseRequested", "onChannelBrowseRequested")
+        m.tvGuide.observeField("menuRequested", "onTvGuideMenuRequested")
         m.playlistGuide.observeField("itemSelected", "onPlaylistItemSelected")
         m.playlistGuide.observeField("closeRequested", "onPlaylistGuideClosed")
+        m.playlistGuide.observeField("menuRequested", "onPlaylistGuideMenuRequested")
+        m.sideMenu.observeField("closeRequested", "onSideMenuClosed")
+        m.sideMenu.observeField("settingsRequested", "onSettingsRequested")
+        m.settingsView.observeField("closeRequested", "onSettingsViewClosed")
+        m.settingsView.observeField("settingChanged", "onSettingChanged")
         m.catalogTask.observeField("catalog", "onCatalogLoaded")
         m.catalogTask.observeField("errorMessage", "onCatalogError")
         m.playlistTask.observeField("playlist", "onPlaylistLoaded")
@@ -44,9 +55,11 @@
         m.playlistLoadWatchdog.observeField("fire", "onPlaylistLoadTimeout")
         m.videoComponent.observeField("playbackEnded", "onPlaybackEnded")
 
-        showLoading("Loading TV guide...")
         appInfo = createObject("roAppInfo")
-        m.catalogTask.uri = appInfo.getValue("channel_catalog_url")
+        m.serverUrl = resolveServerUrl(appInfo.getValue("channel_catalog_url"))
+
+        showLoading("Loading TV guide...")
+        m.catalogTask.uri = m.serverUrl
         m.defaultChannel = ""
         defaultChannelValue = appInfo.getValue("default_channel")
         if defaultChannelValue <> invalid then m.defaultChannel = defaultChannelValue.trim()
@@ -330,6 +343,73 @@
       sub focusPlaylistGuide()
         m.playlistGuide.setFocus(true)
         m.playlistGuide.focusRequested = true
+      end sub
+
+      function resolveServerUrl(manifestUrl as string) as string
+        storedUrl = readSetting("server_url")
+        if manifestUrl = ""
+          if storedUrl <> "" then return storedUrl
+          return ""
+        end if
+        if manifestUrl <> storedUrl
+          writeSetting("server_url", manifestUrl)
+        end if
+        return manifestUrl
+      end function
+
+      function readSetting(key as string) as string
+        section = createObject("roRegistrySection", "AppSettings")
+        if section.exists(key) then return section.read(key)
+        return ""
+      end function
+
+      sub writeSetting(key as string, value as string)
+        section = createObject("roRegistrySection", "AppSettings")
+        section.write(key, value)
+        section.flush()
+      end sub
+
+      sub onTvGuideMenuRequested()
+        m.menuReturnTarget = "tvGuide"
+        showSideMenu()
+      end sub
+
+      sub onPlaylistGuideMenuRequested()
+        m.menuReturnTarget = "playlistGuide"
+        showSideMenu()
+      end sub
+
+      sub showSideMenu()
+        m.sideMenu.visible = true
+        m.sideMenu.focusRequested = true
+      end sub
+
+      sub onSideMenuClosed()
+        m.sideMenu.visible = false
+        if m.menuReturnTarget = "playlistGuide"
+          focusPlaylistGuide()
+        else
+          focusTvGuide()
+        end if
+      end sub
+
+      sub onSettingsRequested()
+        m.sideMenu.visible = false
+        m.settingsView.serverUrl = m.serverUrl
+        m.settingsView.visible = true
+        m.settingsView.focusRequested = true
+      end sub
+
+      sub onSettingsViewClosed()
+        m.settingsView.visible = false
+        showSideMenu()
+      end sub
+
+      sub onSettingChanged(event as object)
+        changed = event.getData()
+        if changed <> invalid and changed.key = "server_url"
+          m.serverUrl = changed.value
+        end if
       end sub
 
       function onKeyEvent(key as string, press as boolean) as boolean

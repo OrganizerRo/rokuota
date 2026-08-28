@@ -5,6 +5,7 @@
     <field id="channelSelected" type="integer" alwaysNotify="true" />
     <field id="channelBrowseRequested" type="integer" alwaysNotify="true" />
     <field id="focusRequested" type="boolean" alwaysNotify="true" />
+    <field id="menuRequested" type="boolean" alwaysNotify="true" />
   </interface>
 
   <children>
@@ -112,7 +113,12 @@
       end function
 
       function onKeyEvent(key as string, press as boolean) as boolean
-        if not press or key <> "right" then return false
+        if not press then return false
+        if key = "left"
+          m.top.menuRequested = true
+          return true
+        end if
+        if key <> "right" then return false
         if m.top.content = invalid or m.top.content.getChildCount() = 0 then return false
         m.top.channelBrowseRequested = m.focusedIndex
         return true

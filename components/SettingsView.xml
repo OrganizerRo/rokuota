@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="SettingsView" extends="Group">
+  <interface>
+    <field id="serverUrl" type="string" />
+    <field id="closeRequested" type="boolean" alwaysNotify="true" />
+    <field id="settingChanged" type="assocarray" alwaysNotify="true" />
+    <field id="focusRequested" type="boolean" alwaysNotify="true" />
+  </interface>
+
+  <children>
+    <Rectangle width="1920" height="1080" color="#0C131C" />
+
+    <Label
+      translation="[110,55]"
+      width="1700"
+      height="60"
+      text="Settings"
+      font="font:LargeBoldSystemFont"
+      color="#FFFFFF" />
+
+    <Label
+      translation="[110,120]"
+      width="1700"
+      height="36"
+      text="OK: edit setting    Back: return to menu"
+      font="font:MediumSystemFont"
+      color="#9DB0C3" />
+
+    <MarkupList
+      id="settingsList"
+      translation="[110,190]"
+      itemSize="[600,80]"
+      itemSpacing="[0,8]"
+      numRows="8"
+      drawFocusFeedback="true"
+      vertFocusAnimationStyle="floatingFocus"
+      itemComponentName="SettingsItemRenderer" />
+  </children>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.settingsList = m.top.findNode("settingsList")
+        m.settingsList.observeField("itemSelected", "onItemSelected")
+        m.top.observeField("focusRequested", "onFocusRequested")
+        m.top.observeField("serverUrl", "onServerUrlChanged")
+        m.editingIndex = -1
+        buildSettingsContent()
+      end sub
+
+      sub buildSettingsContent()
+        content = createObject("roSGNode", "ContentNode")
+        serverItem = content.createChild("ContentNode")
+        serverItem.title = "Server URL"
+        serverItem.description = m.top.serverUrl
+        m.settingsList.content = content
+      end sub
+
+      sub onServerUrlChanged()
+        buildSettingsContent()
+      end sub
+
+      sub onFocusRequested()
+        m.settingsList.setFocus(true)
+      end sub
+
+      sub onItemSelected(event as object)
+        index = event.getData()
+        if index = 0
+          m.editingIndex = 0
+          showKeyboard("Server URL", m.top.serverUrl)
+        end if
+      end sub
+
+      sub showKeyboard(title as string, currentValue as string)
+        dialog = createObject("roSGNode", "KeyboardDialog")
+        dialog.title = "Edit " + title
+        dialog.buttons = ["OK", "Cancel"]
+        dialog.text = currentValue
+        dialog.observeField("buttonSelected", "onKeyboardButton")
+        dialog.observeField("wasClosed", "onKeyboardClosed")
+        m.keyboardDialog = dialog
+        m.top.getScene().dialog = dialog
+      end sub
+
+      sub onKeyboardButton(event as object)
+        buttonIndex = event.getData()
+        if buttonIndex = 0
+          newValue = m.keyboardDialog.text
+          if m.editingIndex = 0
+            saveSetting("server_url", newValue)
+            m.top.serverUrl = newValue
+            m.top.settingChanged = { key: "server_url", value: newValue }
+          end if
+        end if
+        m.keyboardDialog.close = true
+      end sub
+
+      sub onKeyboardClosed()
+        m.keyboardDialog = invalid
+        m.editingIndex = -1
+        m.settingsList.setFocus(true)
+      end sub
+
+      sub saveSetting(key as string, value as string)
+        section = createObject("roRegistrySection", "AppSettings")
+        section.write(key, value)
+        section.flush()
+      end sub
+
+      function onKeyEvent(key as string, press as boolean) as boolean
+        if not press then return false
+        if key = "back"
+          m.top.closeRequested = true
+          return true
+        end if
+        return false
+      end function
+    ]]>
+  </script>
+</component>
