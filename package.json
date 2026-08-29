@@ -1,0 +1,21 @@
+{
+  "name": "rokuota",
+  "version": "1.0.0",
+  "description": "Roku SceneGraph TV guide for the Explore2Express TV Server.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OrganizerRo/rokuota.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/OrganizerRo/rokuota/issues"
+  },
+  "homepage": "https://github.com/OrganizerRo/rokuota#readme"
+}

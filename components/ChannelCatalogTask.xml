@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="ChannelCatalogTask" extends="Task">
+  <interface>
+    <field id="uri" type="string" />
+    <field id="timeoutSeconds" type="integer" value="10" />
+    <field id="catalog" type="node" />
+    <field id="errorMessage" type="string" />
+  </interface>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.top.functionName = "loadCatalog"
+      end sub
+
+      sub loadCatalog()
+        m.top.errorMessage = ""
+        if m.top.uri = ""
+          m.top.errorMessage = "The channel catalog URL is not configured."
+          return
+        end if
+
+        response = fetchText(m.top.uri)
+        if response.error <> ""
+          m.top.errorMessage = response.error
+          return
+        end if
+
+        channels = ParseJson(response.body)
+        if type(channels) <> "roArray"
+          m.top.errorMessage = "The channel API must return a JSON array."
+          return
+        end if
+
+        catalog = createObject("roSGNode", "ContentNode")
+        for each channel in channels
+          if type(channel) = "roAssociativeArray"
+            appendChannel(catalog, channel)
+          end if
+        end for
+
+        if catalog.getChildCount() = 0
+          m.top.errorMessage = "The channel API returned no valid channels."
+          return
+        end if
+        m.top.catalog = catalog
+      end sub
+
+      function fetchText(uri as string) as object
+        transfer = createObject("roUrlTransfer")
+        transfer.setCertificatesFile("common:/certs/ca-bundle.crt")
+        transfer.initClientCertificates()
+        transfer.setUrl(uri)
+        port = createObject("roMessagePort")
+        transfer.setMessagePort(port)
+
+        if not transfer.asyncGetToString()
+          return { body: "", error: "The channel API request could not be started." }
+        end if
+
+        timeoutSeconds = m.top.timeoutSeconds
+        if timeoutSeconds <= 0 then timeoutSeconds = 10
+        event = wait(timeoutSeconds * 1000, port)
+        if event = invalid
+          transfer.asyncCancel()
+          return { body: "", error: "The channel API did not respond within " + timeoutSeconds.toStr() + " seconds." }
+        end if
+        if type(event) <> "roUrlEvent"
+          transfer.asyncCancel()
+          return { body: "", error: "The channel API returned an unexpected network event." }
+        end if
+
+        body = event.getString()
+        code = event.getResponseCode()
+
+        if code < 200 or code >= 300
+          return { body: "", error: "Channel API request failed with HTTP " + code.toStr() + "." }
+        end if
+        if body = "" then return { body: "", error: "The channel API returned an empty response." }
+        return { body: body, error: "" }
+      end function
+
+      sub appendChannel(parent as object, channel as object)
+        title = getString(channel, "title")
+        if title = "" then return
+
+        baseUrl = getString(channel, "baseUrl")
+        if baseUrl <> ""
+          channelUrl = ensureTrailingSlash(baseUrl)
+          playlistUrl = channelUrl + "all"
+          playlistType = "server-random"
+          status = "online"
+        else
+          channelUrl = getString(channel, "url")
+          playlistUrl = channelUrl
+          playlistType = normalizePlaylistType(getString(channel, "playlistType"))
+          status = getString(channel, "status")
+        end if
+        if channelUrl = "" then return
+
+        item = createObject("roSGNode", "ContentNode")
+        item.addFields({
+          playlistType: playlistType,
+          playlistUrl: playlistUrl,
+          totalNumOfVideos: getInteger(channel, "totalNumOfVideos"),
+          totalPlaylistInMinutes: getFloat(channel, "totalPlaylistInMinutes"),
+          currentIndex: getInteger(channel, "currentIndex"),
+          tagsText: formatTags(channel),
+          channelStatus: status
+        })
+        item.url = channelUrl
+        item.title = title
+        item.description = getString(channel, "description")
+        item.HDPosterUrl = randomThumbnail(channel)
+        parent.appendChild(item)
+      end sub
+
+      function ensureTrailingSlash(value as string) as string
+        if value.right(1) = "/" then return value
+        return value + "/"
+      end function
+
+      function randomThumbnail(channel as object) as string
+        candidates = []
+        keys = [ "thumbs", "thumbnails" ]
+        for each key in keys
+          if channel.doesExist(key) and type(channel[key]) = "roArray"
+            for each thumbnail in channel[key]
+              thumbnailType = type(thumbnail)
+              if (thumbnailType = "roString" or thumbnailType = "String") and thumbnail.trim() <> ""
+                candidates.push(thumbnail.trim())
+              end if
+            end for
+          else if channel.doesExist(key) and (type(channel[key]) = "roString" or type(channel[key]) = "String")
+            if channel[key].trim() <> "" then candidates.push(channel[key].trim())
+          end if
+        end for
+        if candidates.count() = 0 and channel.doesExist("thumbnail")
+          thumbnailType = type(channel.thumbnail)
+          if thumbnailType = "roString" or thumbnailType = "String"
+            if channel.thumbnail.trim() <> "" then candidates.push(channel.thumbnail.trim())
+          end if
+        end if
+        if candidates.count() = 0 then return ""
+        index = 0
+        if candidates.count() > 1 then index = Rnd(candidates.count()) - 1
+        return resolveCatalogUrl(candidates[index])
+      end function
+
+      function resolveCatalogUrl(value as string) as string
+        lowerUrl = LCase(value)
+        if lowerUrl.left(7) = "http://" or lowerUrl.left(8) = "https://" then return value
+
+        parts = m.top.uri.split("/")
+        if value.left(1) = "/" and parts.count() >= 3
+          return parts[0] + "//" + parts[2] + value
+        end if
+        return value
+      end function
+
+      function normalizePlaylistType(value as string) as string
+        result = LCase(value)
+        if result = "m3u8" then return "m3u"
+        return result
+      end function
+
+      function formatTags(channel as object) as string
+        if not channel.doesExist("tags") or channel.tags = invalid then return ""
+        if type(channel.tags) = "roArray" then return channel.tags.join(", ")
+        if type(channel.tags) = "roString" or type(channel.tags) = "String" then return channel.tags
+        return ""
+      end function
+
+      function getString(obj as object, key as string, fallback = "" as string) as string
+        if obj.doesExist(key) and obj[key] <> invalid then return obj[key].toStr()
+        return fallback
+      end function
+
+      function getInteger(obj as object, key as string) as integer
+        if obj.doesExist(key) and obj[key] <> invalid then return obj[key].toInt()
+        return 0
+      end function
+
+      function getFloat(obj as object, key as string) as float
+        if obj.doesExist(key) and obj[key] <> invalid then return obj[key].toFloat()
+        return 0.0
+      end function
+    ]]>
+  </script>
+</component>

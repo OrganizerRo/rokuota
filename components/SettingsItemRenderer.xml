@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="SettingsItemRenderer" extends="Group">
+  <children>
+    <LayoutGroup layoutDirection="vert" translation="[30,12]" itemSpacings="[4]">
+      <Label
+        id="labelField"
+        width="540"
+        height="32"
+        font="font:SmallBoldSystemFont"
+        color="#FFFFFF" />
+      <Label
+        id="valueField"
+        width="540"
+        height="28"
+        font="font:SmallSystemFont"
+        color="#9DB0C3"
+        maxLines="1" />
+    </LayoutGroup>
+  </children>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.labelField = m.top.findNode("labelField")
+        m.valueField = m.top.findNode("valueField")
+        m.top.observeField("itemContent", "onContentChanged")
+      end sub
+
+      sub onContentChanged()
+        content = m.top.itemContent
+        if content = invalid then return
+        m.labelField.text = content.title
+        if content.description <> invalid and content.description <> ""
+          m.valueField.text = content.description
+        else
+          m.valueField.text = "(not set)"
+        end if
+      end sub
+    ]]>
+  </script>
+</component>

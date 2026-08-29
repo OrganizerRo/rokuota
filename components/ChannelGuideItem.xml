@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="ChannelGuideItem" extends="Group">
+  <interface>
+    <field id="itemContent" type="node" />
+  </interface>
+
+  <children>
+    <Rectangle id="itemBackground" width="1700" height="118" color="#182331" />
+    <Rectangle id="statusStripe" width="10" height="118" color="#36C275" />
+
+    <Label
+      id="channelTitle"
+      translation="[35,18]"
+      width="470"
+      height="42"
+      font="font:MediumBoldSystemFont"
+      color="#FFFFFF" />
+
+    <Label
+      id="description"
+      translation="[35,65]"
+      width="900"
+      height="32"
+      font="font:SmallSystemFont"
+      color="#B7C3D0" />
+
+    <Label
+      id="playlistSummary"
+      translation="[980,18]"
+      width="680"
+      height="38"
+      horizAlign="right"
+      font="font:MediumSystemFont"
+      color="#FFFFFF" />
+
+    <Label
+      id="tags"
+      translation="[980,67]"
+      width="680"
+      height="30"
+      horizAlign="right"
+      font="font:SmallSystemFont"
+      color="#8FA5B8" />
+  </children>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.itemBackground = m.top.findNode("itemBackground")
+        m.itemBackground.opacity = manifestOpacity("guide_item_opacity", 0.8)
+        m.channelTitle = m.top.findNode("channelTitle")
+        m.description = m.top.findNode("description")
+        m.playlistSummary = m.top.findNode("playlistSummary")
+        m.tags = m.top.findNode("tags")
+        m.statusStripe = m.top.findNode("statusStripe")
+        m.top.observeField("itemContent", "onContentChanged")
+      end sub
+
+      function manifestOpacity(key as string, fallback as float) as float
+        appInfo = createObject("roAppInfo")
+        text = appInfo.getValue(key)
+        if text = invalid or text = "" then return fallback
+        value = text.toFloat()
+        if value < 0 then return 0
+        if value > 1 then return 1
+        return value
+      end function
+
+      sub onContentChanged()
+        item = m.top.itemContent
+        if item = invalid then return
+
+        m.channelTitle.text = item.title
+        m.description.text = item.description
+
+        if item.playlistType = "server-random"
+          countText = "Shuffled playlist"
+          if item.totalNumOfVideos > 0
+            countText = item.totalNumOfVideos.toStr() + " videos"
+            if item.totalPlaylistInMinutes > 0
+              countText += "  |  " + int(item.totalPlaylistInMinutes).toStr() + " min"
+            end if
+            countText += "  |  Shuffled"
+          end if
+        else
+          countText = item.totalNumOfVideos.toStr() + " videos"
+          if item.totalPlaylistInMinutes > 0
+            countText += "  |  " + int(item.totalPlaylistInMinutes).toStr() + " min"
+          end if
+          countText += "  |  Playing " + (item.currentIndex + 1).toStr()
+        end if
+        m.playlistSummary.text = countText
+
+        if item.playlistType = "server-random"
+          detail = "EXPLORE2EXPRESS"
+        else
+          detail = UCase(item.playlistType)
+        end if
+        if item.tagsText <> "" then detail += "  |  " + item.tagsText
+        if item.channelStatus <> "" then detail += "  |  " + item.channelStatus
+        m.tags.text = detail
+
+        status = LCase(item.channelStatus)
+        if status = "offline" or status = "inactive" or status = "disabled"
+          m.statusStripe.color = "#D94A4A"
+        else
+          m.statusStripe.color = "#36C275"
+        end if
+      end sub
+    ]]>
+  </script>
+</component>

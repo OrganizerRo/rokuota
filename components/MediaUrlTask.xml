@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="MediaUrlTask" extends="Task">
+  <interface>
+    <field id="uri" type="string" />
+    <field id="timeoutSeconds" type="integer" value="15" />
+    <field id="mediaUrl" type="string" alwaysNotify="true" />
+    <field id="streamFormat" type="string" alwaysNotify="true" />
+    <field id="mediaTitle" type="string" />
+    <field id="mediaDescription" type="string" />
+    <field id="mediaThumbnail" type="string" />
+    <field id="mediaLength" type="integer" value="-1" />
+    <field id="errorMessage" type="string" alwaysNotify="true" />
+  </interface>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.top.functionName = "resolveMediaUrl"
+      end sub
+
+      sub resolveMediaUrl()
+        m.top.errorMessage = ""
+        m.top.mediaUrl = ""
+        m.top.streamFormat = ""
+        m.top.mediaTitle = ""
+        m.top.mediaDescription = ""
+        m.top.mediaThumbnail = ""
+        m.top.mediaLength = -1
+        if m.top.uri = ""
+          m.top.errorMessage = "The channel media resolver URL is missing."
+          return
+        end if
+
+        transfer = createObject("roUrlTransfer")
+        transfer.setCertificatesFile("common:/certs/ca-bundle.crt")
+        transfer.initClientCertificates()
+        transfer.setUrl(m.top.uri)
+        port = createObject("roMessagePort")
+        transfer.setMessagePort(port)
+
+        if not transfer.asyncGetToString()
+          m.top.errorMessage = "The media URL request could not be started."
+          return
+        end if
+
+        timeoutSeconds = m.top.timeoutSeconds
+        if timeoutSeconds <= 0 then timeoutSeconds = 15
+        event = wait(timeoutSeconds * 1000, port)
+        if event = invalid
+          transfer.asyncCancel()
+          m.top.errorMessage = "The media URL server did not respond within " + timeoutSeconds.toStr() + " seconds."
+          return
+        end if
+        if type(event) <> "roUrlEvent"
+          transfer.asyncCancel()
+          m.top.errorMessage = "The media URL server returned an unexpected network event."
+          return
+        end if
+
+        body = event.getString().trim()
+        code = event.getResponseCode()
+
+        if code < 200 or code >= 300
+          m.top.errorMessage = "Media URL resolution failed with HTTP " + code.toStr() + "."
+          return
+        end if
+
+        response = ParseJson(body)
+        if type(response) <> "roAssociativeArray" or not response.doesExist("mediaUrl") or not response.doesExist("streamFormat")
+          m.top.errorMessage = "The server returned an invalid media response."
+          return
+        end if
+        mediaUrlType = type(response.mediaUrl)
+        streamFormatType = type(response.streamFormat)
+        if (mediaUrlType <> "roString" and mediaUrlType <> "String") or (streamFormatType <> "roString" and streamFormatType <> "String")
+          m.top.errorMessage = "The server returned an invalid media response."
+          return
+        end if
+
+        mediaUrl = response.mediaUrl.trim()
+        streamFormat = response.streamFormat.trim()
+        if mediaUrl = ""
+          m.top.errorMessage = "The server returned an invalid media response."
+          return
+        end if
+
+        lowerUrl = LCase(mediaUrl)
+        if lowerUrl.left(7) <> "http://" and lowerUrl.left(8) <> "https://"
+          m.top.errorMessage = "The server returned a media location Roku cannot stream."
+          return
+        end if
+        if streamFormat = "" then streamFormat = mediaFormat(mediaUrl)
+        if response.doesExist("title")
+          titleType = type(response.title)
+          if titleType = "roString" or titleType = "String"
+            m.top.mediaTitle = transfer.unescape(response.title.trim())
+          end if
+        end if
+        if response.doesExist("description")
+          descriptionType = type(response.description)
+          if descriptionType = "roString" or descriptionType = "String"
+            m.top.mediaDescription = transfer.unescape(response.description.trim())
+          end if
+        end if
+        thumbnail = randomThumbnail(response)
+        lowerThumbnail = LCase(thumbnail)
+        if lowerThumbnail.left(7) = "http://" or lowerThumbnail.left(8) = "https://"
+          m.top.mediaThumbnail = thumbnail
+        end if
+        if response.doesExist("length")
+          lengthType = type(response.length)
+          if lengthType = "Integer" or lengthType = "LongInteger" or lengthType = "Float" or lengthType = "Double"
+            length = int(response.length)
+            if length >= 0 then m.top.mediaLength = length
+          end if
+        end if
+        m.top.streamFormat = streamFormat
+        m.top.mediaUrl = mediaUrl
+      end sub
+
+      function randomThumbnail(response as object) as string
+        candidates = []
+        keys = [ "thumbs", "thumbnails" ]
+        for each key in keys
+          if response.doesExist(key) and type(response[key]) = "roArray"
+            for each thumbnail in response[key]
+              thumbnailType = type(thumbnail)
+              if (thumbnailType = "roString" or thumbnailType = "String") and thumbnail.trim() <> ""
+                candidates.push(thumbnail.trim())
+              end if
+            end for
+          else if response.doesExist(key) and (type(response[key]) = "roString" or type(response[key]) = "String")
+            if response[key].trim() <> "" then candidates.push(response[key].trim())
+          end if
+        end for
+        if candidates.count() = 0 and response.doesExist("thumbnail")
+          thumbnailType = type(response.thumbnail)
+          if thumbnailType = "roString" or thumbnailType = "String"
+            if response.thumbnail.trim() <> "" then candidates.push(response.thumbnail.trim())
+          end if
+        end if
+        if candidates.count() = 0 then return ""
+        index = 0
+        if candidates.count() > 1 then index = Rnd(candidates.count()) - 1
+        return candidates[index]
+      end function
+
+      function mediaFormat(url as string) as string
+        cleanUrl = url
+        queryAt = instr(1, cleanUrl, "?")
+        if queryAt > 0 then cleanUrl = cleanUrl.left(queryAt - 1)
+        fragmentAt = instr(1, cleanUrl, "#")
+        if fragmentAt > 0 then cleanUrl = cleanUrl.left(fragmentAt - 1)
+        extension = ""
+        for index = len(cleanUrl) to 1 step -1
+          character = cleanUrl.mid(index - 1, 1)
+          if character = "."
+            extension = LCase(cleanUrl.mid(index))
+            exit for
+          end if
+          if character = "/" then exit for
+        end for
+        if extension = "m3u8" then return "hls"
+        if extension = "mpd" then return "dash"
+        if extension = "ism" or extension = "isml" then return "ism"
+        if extension = "m4a" then return "mp4"
+        if extension = "wav" then return "pcm"
+        if extension = "" then return "mp4"
+        return extension
+      end function
+    ]]>
+  </script>
+</component>

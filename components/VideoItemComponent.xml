@@ -2,14 +2,16 @@
 <component name="VideoItemComponent" extends="Group">
 
   <interface>
-    <field id="itemContent" type="node" onChange="onContentChanged" />
+    <field id="itemContent" type="node" />
   </interface>
 
   <children>
+    <Rectangle id="itemBackground" width="1700" height="130" color="#182331" />
     <LayoutGroup
       layoutDirection="horiz"
       itemSpacings="[20]"
-      vertAlignment="center">
+      vertAlignment="center"
+      translation="[20,60]">
 
       <Poster
         id="thumbnail"
@@ -22,13 +24,12 @@
 
       <LayoutGroup
         layoutDirection="vert"
-        itemSpacings="[4]"
-        translation="[0,10]">
+        itemSpacings="[4]">
 
         <Label
           id="titleLabel"
-          width="1380"
-          height="40"
+          width="1180"
+          height="48"
           font="font:MediumBoldSystemFont"
           color="#EEEEEE"
           text="" />
@@ -36,17 +37,28 @@
         <Label
           id="descLabel"
           width="1380"
-          height="32"
+          height="36"
           font="font:SmallSystemFont"
           color="#AAAAAA"
           text="" />
       </LayoutGroup>
     </LayoutGroup>
 
+    <Label
+      id="durationLabel"
+      translation="[1490,25]"
+      width="170"
+      height="42"
+      horizAlign="right"
+      font="font:SmallSystemFont"
+      color="#D7E0EA"
+      text="" />
+
     <Poster
       id="fallbackIcon"
       width="160"
       height="90"
+      translation="[20,20]"
       uri="pkg:/images/video_placeholder.png"
       visible="false" />
   </children>
@@ -54,17 +66,32 @@
   <script type="text/brightscript">
     <![CDATA[
       sub init()
+        m.itemBackground = m.top.findNode("itemBackground")
+        m.itemBackground.opacity = manifestOpacity("guide_item_opacity", 0.8)
         m.thumbnail = m.top.findNode("thumbnail")
         m.fallbackIcon = m.top.findNode("fallbackIcon")
         m.titleLabel = m.top.findNode("titleLabel")
         m.descLabel = m.top.findNode("descLabel")
+        m.durationLabel = m.top.findNode("durationLabel")
+        m.top.observeField("itemContent", "onContentChanged")
       end sub
+
+      function manifestOpacity(key as string, fallback as float) as float
+        appInfo = createObject("roAppInfo")
+        text = appInfo.getValue(key)
+        if text = invalid or text = "" then return fallback
+        value = text.toFloat()
+        if value < 0 then return 0
+        if value > 1 then return 1
+        return value
+      end function
 
       sub onContentChanged()
         content = m.top.itemContent
         if content = invalid then return
 
         m.titleLabel.text = content.title
+        m.durationLabel.text = formatDuration(content.metadataLength)
 
         if content.description <> invalid and content.description <> ""
           m.descLabel.text = content.description
@@ -82,6 +109,20 @@
           m.fallbackIcon.visible = true
         end if
       end sub
+
+      function formatDuration(value as dynamic) as string
+        if value = invalid or value < 0 then return ""
+        totalSeconds = int(value)
+        hours = int(totalSeconds / 3600)
+        minutes = int((totalSeconds mod 3600) / 60)
+        seconds = totalSeconds mod 60
+        secondsText = seconds.toStr()
+        if seconds < 10 then secondsText = "0" + secondsText
+        minutesText = minutes.toStr()
+        if hours > 0 and minutes < 10 then minutesText = "0" + minutesText
+        if hours > 0 then return hours.toStr() + ":" + minutesText + ":" + secondsText
+        return minutesText + ":" + secondsText
+      end function
     ]]>
   </script>
 

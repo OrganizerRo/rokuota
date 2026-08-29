@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="SideMenu" extends="Group">
+  <interface>
+    <field id="closeRequested" type="boolean" alwaysNotify="true" />
+    <field id="settingsRequested" type="boolean" alwaysNotify="true" />
+    <field id="focusRequested" type="boolean" alwaysNotify="true" />
+  </interface>
+
+  <children>
+    <Rectangle id="dimBackdrop" width="1920" height="1080" color="#000000" opacity="0.5" />
+
+    <Rectangle id="panel" width="400" height="1080" color="#1A2332">
+      <Poster
+        id="appLogo"
+        translation="[75,40]"
+        width="250"
+        height="186"
+        uri="pkg:/images/icon_focus_hd.jpg"
+        loadDisplayMode="scaleToFit" />
+
+      <Rectangle
+        id="settingsButton"
+        translation="[0,980]"
+        width="400"
+        height="80"
+        color="#00000000">
+        <Rectangle
+          id="settingsFocusBg"
+          width="380"
+          height="70"
+          translation="[10,5]"
+          color="#2A3A4E"
+          visible="false" />
+        <Label
+          translation="[60,22]"
+          text="Settings"
+          font="font:MediumBoldSystemFont"
+          color="#FFFFFF" />
+      </Rectangle>
+    </Rectangle>
+  </children>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.settingsFocusBg = m.top.findNode("settingsFocusBg")
+        m.top.observeField("focusRequested", "onFocusRequested")
+        m.top.observeField("focusedChild", "onFocusChanged")
+      end sub
+
+      sub onFocusRequested()
+        m.top.setFocus(true)
+        m.settingsFocusBg.visible = true
+      end sub
+
+      sub onFocusChanged()
+        m.settingsFocusBg.visible = m.top.hasFocus()
+      end sub
+
+      function onKeyEvent(key as string, press as boolean) as boolean
+        if not press then return false
+        if key = "right" or key = "back"
+          m.top.closeRequested = true
+          return true
+        end if
+        if key = "OK"
+          m.top.settingsRequested = true
+          return true
+        end if
+        return true
+      end function
+    ]]>
+  </script>
+</component>
