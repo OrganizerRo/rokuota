@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <component name="SettingsItemRenderer" extends="Group">
+  
+  <!-- ADD THIS INTERFACE BLOCK -->
+  <interface>
+    <field id="itemContent" type="node" onChange="onContentChanged" />
+  </interface>
+
   <children>
     <LayoutGroup layoutDirection="vert" translation="[30,12]" itemSpacings="[4]">
       <Label
@@ -23,13 +29,15 @@
       sub init()
         m.labelField = m.top.findNode("labelField")
         m.valueField = m.top.findNode("valueField")
-        m.top.observeField("itemContent", "onContentChanged")
+        ' m.top.observeField is no longer needed since we used onChange in the interface
       end sub
 
       sub onContentChanged()
         content = m.top.itemContent
         if content = invalid then return
+        
         m.labelField.text = content.title
+        
         if content.description <> invalid and content.description <> ""
           m.valueField.text = content.description
         else

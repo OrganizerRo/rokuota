@@ -59,7 +59,7 @@
 
       function onKeyEvent(key as string, press as boolean) as boolean
         if not press then return false
-        if key = "right" or key = "back"
+        if key = "left" or key = "back" or key="right"
           m.top.closeRequested = true
           return true
         end if
