@@ -1,9 +1,7 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <component name="SettingsItemRenderer" extends="Group">
-  
-  <!-- ADD THIS INTERFACE BLOCK -->
   <interface>
-    <field id="itemContent" type="node" onChange="onContentChanged" />
+    <field id="itemContent" type="node" />
   </interface>
 
   <children>
@@ -29,7 +27,7 @@
       sub init()
         m.labelField = m.top.findNode("labelField")
         m.valueField = m.top.findNode("valueField")
-        ' m.top.observeField is no longer needed since we used onChange in the interface
+        m.top.observeField("itemContent", "onContentChanged")
       end sub
 
       sub onContentChanged()

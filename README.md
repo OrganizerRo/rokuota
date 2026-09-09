@@ -11,6 +11,7 @@ channel_catalog_url=http://192.168.0.103:8080/channels/
 channel_catalog_timeout_seconds=10
 default_channel=
 default_channel_back_destination=home
+live_guide_back_destination=onDemand
 guide_backdrop_opacity=0.25
 guide_foreground_opacity=1.0
 guide_item_opacity=0.80
@@ -22,6 +23,19 @@ waits before showing an error. Missing, zero, and negative values use 10 seconds
 Catalog and playlist API errors display their dialog over a looping
 `pkg:/tvstatic2p.mp4` full-screen static video.
 
+The left menu provides two guide actions. **On Demand** opens the channel and
+playlist browser backed by `/channels/`, while **Live TV** opens the
+time-proportional linear schedule backed by `/channels/guide`. **Settings**
+configures the server URL. Selecting any Live TV program tile tunes the
+channel's current `/{channel}/live` broadcast and continues with the next
+program when the current one finishes. The Live TV parser uses the `title` and
+`entries` fields emitted by the server's guide endpoint, with each entry's
+local schedule time read from `starttime`.
+
+In On Demand, selecting a channel plays its playlist continuously. Browsing a
+channel with Right and selecting a specific program plays only that program,
+then returns to the channel's program listing.
+
 Set `default_channel` to a channel title, URL, or URL path segment to start
 playing that channel immediately after the catalog loads. For example,
 `default_channel=Local News` and `default_channel=/Local%20News/` both match
@@ -31,6 +45,10 @@ TV guide. Default-channel playback uses the normal shuffled channel flow.
 Home; set it to `guide` to return to the TV guide instead. Other values use
 the safer default of `home`. Playback started manually from either guide
 always returns to its existing guide destination.
+
+`live_guide_back_destination` controls Back from the Live TV guide. Use
+`onDemand` (the default) to return to the On Demand guide, `menu` to open the
+side menu, or `home` to exit to Roku Home. Unknown values use `onDemand`.
 
 The opacity values range from `0` (transparent) to `1` (opaque). Guide
 backdrops use the focused channel or program thumbnail.
@@ -54,8 +72,19 @@ video is packaged with the channel.
 ```
 
 Pressing OK on a channel requests `/{channel}/all` to determine the playlist cycle
-length. Before each item plays, the app requests `/{channel}/`, allowing the
-server to choose the next shuffled, unwatched entry. The resolver returns JSON:
+length. The app requests `/{channel}/` once for each shuffled slot, allowing the
+server to reserve the next shuffled, unwatched entry. A lookahead request is made
+when 10% of the current item remains, clamped to 30–180 seconds; short items
+prefetch immediately. The cached response is promoted at transition time instead
+of calling the shuffle endpoint again.
+
+On-demand indexed playback prefetches `/{channel}/{index + 1}` and verifies the
+returned `playlistIndex`. Live TV initially resolves `/{channel}/live`, prefetches
+`/{channel}/live/next`, then advances deterministically through
+`/{channel}/{playlistIndex + 1}`. The Live TV response's `playlistIndex` is
+validated before promotion.
+
+The resolver returns JSON:
 
 ```json
 {
@@ -64,13 +93,17 @@ server to choose the next shuffled, unwatched entry. The resolver returns JSON:
   "title": "Program title",
   "description": "Program description",
   "thumbnail": "https://media.example.com/program.jpg",
-  "length": 1800
+  "length": 1800,
+  "playlistIndex": 4
 }
 ```
 
-The resolver response must include string `mediaUrl` and `streamFormat` fields.
-It may also include string `title`, `description`, and HTTP(S) `thumbnail`
-fields plus a non-negative numeric `length` in seconds. The live video overlay
+The resolver must return HTTP 200 with string `mediaUrl` and `streamFormat`
+fields. It may also include string `title`, `description`, and HTTP(S)
+`thumbnail` fields plus a non-negative numeric `length` in seconds.
+Indexed and live responses include numeric `playlistIndex` for lookahead
+identity validation; shuffled responses use the cached response itself as the
+server reservation. The live video overlay
 and audio now-playing panel display the available metadata. Press OK while a
 video is playing to slide up its thumbnail, title, description, content length,
 and current playback progress. A `thumbs` or
@@ -85,6 +118,17 @@ format values: `.mp3` → `mp3`, `.m4a` → `mp4`, `.wav` → `pcm`, and raw `.a
 → `aac`. Each `/all` item must also include a `streamFormat` string in the
 existing `items` array. YouTube URLs are therefore resolved by the server
 through `yt-dlp` only when their item is about to play.
+
+Video lookahead uses a second resolver task and one hidden standby `Video` node.
+Resolved video content is prebuffered with `control="prebuffer"` and promoted
+when the active item finishes; audio is resolved and cached without allocating a
+second audio player. Devices that reject a second video player are detected at
+runtime and remembered in the registry; resolver lookahead remains enabled, but
+subsequent items start through the current player without dual-player
+prebuffering. Other resolver or prebuffer validation failures display a
+playback-interruption warning and use the current resolver as the bounded
+fallback path. Device logs include `resolver_dur`, `playStartInfo.total_dur`,
+`manifest_dur`, and `prebuf_dur` for each item.
 
 Pressing Right on a highlighted channel loads `/{channel}/all` into a program
 Guide. Each row displays the playlist thumbnail, title, description, and

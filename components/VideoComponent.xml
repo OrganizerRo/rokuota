@@ -5,6 +5,9 @@
     <field id="startIndex" type="integer" value="0" />
     <field id="channelTitle" type="string" />
     <field id="singleItem" type="boolean" value="false" />
+    <field id="loopPlaylist" type="boolean" value="false" />
+    <field id="playbackMode" type="string" value="onDemand" />
+    <field id="livePlaylistCount" type="integer" value="0" />
     <field id="exitDestinationLabel" type="string" value="TV Guide" />
     <field id="playbackRequested" type="boolean" alwaysNotify="true" />
     <field id="playbackEnded" type="boolean" alwaysNotify="true" />
@@ -13,9 +16,16 @@
 
   <children>
     <Video
-      id="videoPlayer"
+      id="videoPlayerA"
       width="1920"
       height="1080"
+      enableTrickPlay="true"
+      notificationInterval="0.5" />
+    <Video
+      id="videoPlayerB"
+      width="1920"
+      height="1080"
+      visible="false"
       enableTrickPlay="true"
       notificationInterval="0.5" />
     <Audio id="audioPlayer" notificationInterval="0.5" />
@@ -185,22 +195,27 @@
       visible="false" />
 
     <Timer id="loadWatchdog" duration="15" repeat="false" />
+    <Timer id="prefetchWaitWatchdog" duration="15" repeat="false" />
     <Timer id="skipTimer" duration="2" repeat="false" />
     <Timer id="volumeRefreshTimer" duration="2" repeat="true" />
-    <MediaUrlTask id="mediaUrlTask" />
+    <MediaUrlTask id="currentItemResolver" />
+    <MediaUrlTask id="nextItemResolver" />
     <AudioStatusTask id="audioStatusTask" />
   </children>
 
   <script type="text/brightscript">
     <![CDATA[
       sub init()
-        m.video = m.top.findNode("videoPlayer")
+        m.videoA = m.top.findNode("videoPlayerA")
+        m.videoB = m.top.findNode("videoPlayerB")
+        m.video = m.videoA
+        m.currentVideoSlot = "A"
         m.audio = m.top.findNode("audioPlayer")
-        m.videoTrickPlayBar = m.video.trickPlayBar
-        trickPlayBarPosition = m.videoTrickPlayBar.translation
-        if trickPlayBarPosition <> invalid and trickPlayBarPosition.count() >= 2
-          m.videoTrickPlayBar.translation = [trickPlayBarPosition[0], trickPlayBarPosition[1] - 120]
-        end if
+        m.videoATrickPlayBar = m.videoA.trickPlayBar
+        m.videoBTrickPlayBar = m.videoB.trickPlayBar
+        m.videoTrickPlayBar = m.videoATrickPlayBar
+        positionTrickPlayBar(m.videoATrickPlayBar)
+        positionTrickPlayBar(m.videoBTrickPlayBar)
         m.videoMetadataPanel = m.top.findNode("videoMetadataPanel")
         m.videoThumbnail = m.top.findNode("videoThumbnail")
         m.videoTitle = m.top.findNode("videoTitle")
@@ -223,9 +238,11 @@
         m.statusPanel = m.top.findNode("statusPanel")
         m.statusLabel = m.top.findNode("statusLabel")
         m.loadWatchdog = m.top.findNode("loadWatchdog")
+        m.prefetchWaitWatchdog = m.top.findNode("prefetchWaitWatchdog")
         m.skipTimer = m.top.findNode("skipTimer")
         m.volumeRefreshTimer = m.top.findNode("volumeRefreshTimer")
-        m.mediaUrlTask = m.top.findNode("mediaUrlTask")
+        m.currentItemResolver = m.top.findNode("currentItemResolver")
+        m.nextItemResolver = m.top.findNode("nextItemResolver")
         m.audioStatusTask = m.top.findNode("audioStatusTask")
         m.exitDialog = createObject("roSGNode", "Dialog")
         m.exitDialog.title = "Return to TV Guide?"
@@ -235,24 +252,53 @@
         m.active = false
         m.activePlayer = ""
         m.resolvePending = false
+        m.nextResolvePending = false
+        m.prefetchedItem = invalid
+        m.expectedPrefetchIndex = -1
+        m.expectedServerIndex = -1
+        m.currentServerIndex = -1
+        m.currentResolverDuration = 0
+        m.liveUsesClockNext = true
+        m.prefetchWarningActive = false
+        m.prefetchFailed = false
+        m.dualVideoPrebufferSupported = readDualVideoPrebufferSupport()
+        m.transitionWaitingForPrefetch = false
+        m.currentResolveAdvancesLive = false
+        m.liveFallbackAttempts = 0
+        m.liveFallbackFailed = false
         m.itemStarted = false
+        m.metricsLogged = false
         m.failurePending = false
         m.audioVolume.text = "Volume: unavailable"
 
         m.top.observeField("playbackRequested", "startPlayback")
-        m.video.observeField("state", "onVideoState")
-        m.video.observeField("position", "onVideoPositionChanged")
-        m.videoTrickPlayBar.observeField("visible", "onVideoTrickPlayBarVisibilityChanged")
+        m.videoA.observeField("state", "onVideoAState")
+        m.videoA.observeField("position", "onVideoPositionChanged")
+        m.videoB.observeField("state", "onVideoBState")
+        m.videoB.observeField("position", "onVideoPositionChanged")
+        m.videoATrickPlayBar.observeField("visible", "onVideoATrickPlayBarVisibilityChanged")
+        m.videoBTrickPlayBar.observeField("visible", "onVideoBTrickPlayBarVisibilityChanged")
         m.audio.observeField("state", "onAudioState")
         m.audio.observeField("position", "onAudioPositionChanged")
-        m.mediaUrlTask.observeField("mediaUrl", "onMediaUrlResolved")
-        m.mediaUrlTask.observeField("errorMessage", "onMediaUrlError")
+        m.currentItemResolver.observeField("mediaUrl", "onCurrentMediaUrlResolved")
+        m.currentItemResolver.observeField("errorMessage", "onCurrentMediaUrlError")
+        m.nextItemResolver.observeField("mediaUrl", "onNextMediaUrlResolved")
+        m.nextItemResolver.observeField("errorMessage", "onNextMediaUrlError")
         m.audioStatusTask.observeField("statusText", "onAudioStatusLoaded")
         m.loadWatchdog.observeField("fire", "onLoadTimeout")
+        m.prefetchWaitWatchdog.observeField("fire", "onPrefetchWaitTimeout")
         m.skipTimer.observeField("fire", "playNext")
         m.volumeRefreshTimer.observeField("fire", "refreshAudioStatus")
         m.exitDialog.observeField("buttonSelected", "onExitDialogButton")
         m.exitDialog.observeField("wasClosed", "onExitDialogClosed")
+      end sub
+
+      sub positionTrickPlayBar(bar as object)
+        if bar = invalid then return
+        barPosition = bar.translation
+        if barPosition <> invalid and barPosition.count() >= 2
+          bar.translation = [barPosition[0], barPosition[1] - 120]
+        end if
       end sub
 
       sub startPlayback()
@@ -270,8 +316,34 @@
         m.currentIndex = m.top.startIndex
         if m.currentIndex < 0 then m.currentIndex = 0
         if m.currentIndex >= count then m.currentIndex = count - 1
+        resetPlaybackSlots()
+        m.currentServerIndex = -1
+        m.liveUsesClockNext = true
+        m.prefetchedItem = invalid
+        m.prefetchFailed = false
+        m.nextResolvePending = false
+        m.expectedPrefetchIndex = -1
+        m.expectedServerIndex = -1
+        m.transitionWaitingForPrefetch = false
+        m.currentResolveAdvancesLive = false
+        m.liveFallbackAttempts = 0
+        m.liveFallbackFailed = false
         m.active = true
+        m.currentItemResolver.control = "stop"
+        m.nextItemResolver.control = "stop"
         playCurrent()
+      end sub
+
+      sub resetPlaybackSlots()
+        m.videoA.control = "stop"
+        m.videoB.control = "stop"
+        m.videoA.content = invalid
+        m.videoB.content = invalid
+        m.videoA.visible = true
+        m.videoB.visible = false
+        m.video = m.videoA
+        m.currentVideoSlot = "A"
+        m.videoTrickPlayBar = m.video.trickPlayBar
       end sub
 
       sub playCurrent()
@@ -284,44 +356,262 @@
 
         if item.resolveUrl <> ""
           m.resolvePending = true
+          m.currentResolveAdvancesLive = false
           showStatus("Selecting program " + (m.currentIndex + 1).toStr() + " of " + m.top.playlist.getChildCount().toStr() + "...")
-          m.mediaUrlTask.control = "stop"
-          m.mediaUrlTask.uri = item.resolveUrl
-          m.mediaUrlTask.control = "run"
+          m.currentItemResolver.control = "stop"
+          m.currentItemResolver.uri = item.resolveUrl
+          m.currentItemResolver.control = "run"
           return
         end if
-        startMedia(item.url, item.title, item.streamFormat, item.description, item.HDPosterUrl, item.metadataLength)
+        resolved = resolvedItem(item.url, item.title, item.streamFormat, item.description, item.HDPosterUrl, item.metadataLength, 0, m.currentIndex, -1, 0)
+        startResolvedMedia(resolved)
       end sub
 
-      sub onMediaUrlResolved(event as object)
+      sub onCurrentMediaUrlResolved(event as object)
         mediaUrl = event.getData()
         if not m.active or not m.resolvePending or mediaUrl = "" then return
         m.resolvePending = false
         item = m.top.playlist.getChild(m.currentIndex)
-        title = m.mediaUrlTask.mediaTitle
+        title = m.currentItemResolver.mediaTitle
         if title = "" and item <> invalid then title = item.title
         if title = "" then title = m.top.channelTitle + " - Program " + (m.currentIndex + 1).toStr()
-        description = m.mediaUrlTask.mediaDescription
-        thumbnail = m.mediaUrlTask.mediaThumbnail
-        length = m.mediaUrlTask.mediaLength
+        description = m.currentItemResolver.mediaDescription
+        thumbnail = m.currentItemResolver.mediaThumbnail
+        length = m.currentItemResolver.mediaLength
         if item <> invalid
           if description = "" then description = item.description
           if thumbnail = "" then thumbnail = item.HDPosterUrl
           if length < 0 then length = item.metadataLength
         end if
-        startMedia(mediaUrl, title, m.mediaUrlTask.streamFormat, description, thumbnail, length)
+        resolved = resolvedItem(mediaUrl, title, m.currentItemResolver.streamFormat, description, thumbnail, length, m.currentItemResolver.positionSeconds, m.currentIndex, m.currentItemResolver.playlistIndex, m.currentItemResolver.resolverDuration)
+        if m.currentResolveAdvancesLive and m.expectedServerIndex >= 0 and resolved.serverIndex <> m.expectedServerIndex
+          m.currentResolveAdvancesLive = false
+          m.liveFallbackAttempts++
+          showPrefetchWarning("The server returned a different live program than expected.", "The player will retry the expected indexed program.")
+          if m.liveFallbackAttempts <= 1
+            m.liveUsesClockNext = false
+            fallbackToNextItem(m.currentIndex)
+          else
+            m.liveFallbackFailed = true
+            skipFailedItem("The expected live program could not be validated.")
+          end if
+          return
+        end if
+        if m.currentResolveAdvancesLive then m.liveUsesClockNext = false
+        m.currentResolveAdvancesLive = false
+        startResolvedMedia(resolved)
       end sub
 
-      sub onMediaUrlError(event as object)
+      sub onCurrentMediaUrlError(event as object)
         message = event.getData()
         if not m.active or not m.resolvePending or message = "" then return
         m.resolvePending = false
         skipFailedItem(message)
       end sub
 
-      sub startMedia(url as string, title as string, streamFormat as string, description as string, thumbnail as string, length as integer)
-        m.itemStarted = false
-        m.failurePending = false
+      sub maybePrefetchNext(position as dynamic, duration as dynamic)
+        if not m.active or m.top.singleItem or m.nextResolvePending or m.prefetchedItem <> invalid or m.prefetchFailed then return
+        if duration = invalid or duration <= 0 then duration = m.activeContentLength
+        if duration = invalid or duration <= 0 then return
+        if position = invalid or position < 0 then position = 0
+
+        leadSeconds = int(duration * 0.1)
+        if leadSeconds < 30 then leadSeconds = 30
+        if leadSeconds > 180 then leadSeconds = 180
+        if position < duration - leadSeconds then return
+
+        nextIndex = nextLogicalIndex()
+        if nextIndex < 0 then return
+        item = m.top.playlist.getChild(nextIndex)
+        if item = invalid then return
+
+        m.expectedPrefetchIndex = nextIndex
+        m.expectedServerIndex = expectedNextServerIndex()
+        resolverUri = nextResolverUri(item)
+        if resolverUri = ""
+          m.prefetchedItem = resolvedItem(item.url, item.title, item.streamFormat, item.description, item.HDPosterUrl, item.metadataLength, 0, nextIndex, -1, 0)
+          prebufferPrefetchedVideo()
+          return
+        end if
+
+        m.nextResolvePending = true
+        m.nextItemResolver.control = "stop"
+        m.nextItemResolver.uri = resolverUri
+        m.nextItemResolver.control = "run"
+      end sub
+
+      function nextLogicalIndex() as integer
+        if m.top.playbackMode = "live" then return m.currentIndex
+        nextIndex = m.currentIndex + 1
+        if nextIndex < m.top.playlist.getChildCount() then return nextIndex
+        if m.top.loopPlaylist then return 0
+        return -1
+      end function
+
+      function expectedNextServerIndex() as integer
+        if m.top.playbackMode = "onDemand"
+          nextIndex = nextLogicalIndex()
+          if nextIndex < 0 then return -1
+          item = m.top.playlist.getChild(nextIndex)
+          if item <> invalid and item.resolverIndex <> invalid then return item.resolverIndex
+          return -1
+        end if
+        if m.top.playbackMode <> "live" or m.currentServerIndex < 0 then return -1
+        nextIndex = m.currentServerIndex + 1
+        if m.top.livePlaylistCount > 0 and nextIndex >= m.top.livePlaylistCount then nextIndex = 0
+        return nextIndex
+      end function
+
+      function nextResolverUri(item as object) as string
+        if m.top.playbackMode <> "live" then return item.resolveUrl
+        baseUri = liveBaseUri(item.resolveUrl)
+        if baseUri = "" then return ""
+        if m.liveUsesClockNext then return baseUri + "/live/next"
+        if m.expectedServerIndex < 0 then return baseUri + "/live/next"
+        return baseUri + "/" + m.expectedServerIndex.toStr()
+      end function
+
+      function liveBaseUri(uri as string) as string
+        value = uri
+        while value.len() > 0 and value.right(1) = "/"
+          value = value.left(value.len() - 1)
+        end while
+        if LCase(value.right(5)) = "/live" then return value.left(value.len() - 5)
+        liveAt = instr(1, LCase(value), "/live/")
+        if liveAt > 0 then return value.left(liveAt - 1)
+        return value
+      end function
+
+      sub onNextMediaUrlResolved(event as object)
+        mediaUrl = event.getData()
+        if not m.active or not m.nextResolvePending or mediaUrl = "" then return
+        m.nextResolvePending = false
+
+        actualServerIndex = m.nextItemResolver.playlistIndex
+        if m.expectedServerIndex >= 0 and actualServerIndex <> m.expectedServerIndex
+          invalidatePrefetch("The server returned a different program than expected.")
+          return
+        end if
+
+        item = m.top.playlist.getChild(m.expectedPrefetchIndex)
+        if item = invalid
+          invalidatePrefetch("The next playlist item is no longer available.")
+          return
+        end if
+        title = m.nextItemResolver.mediaTitle
+        if title = "" then title = item.title
+        if title = "" then title = m.top.channelTitle + " - Program " + (m.expectedPrefetchIndex + 1).toStr()
+        description = m.nextItemResolver.mediaDescription
+        thumbnail = m.nextItemResolver.mediaThumbnail
+        length = m.nextItemResolver.mediaLength
+        if description = "" then description = item.description
+        if thumbnail = "" then thumbnail = item.HDPosterUrl
+        if length < 0 then length = item.metadataLength
+        m.prefetchedItem = resolvedItem(mediaUrl, title, m.nextItemResolver.streamFormat, description, thumbnail, length, m.nextItemResolver.positionSeconds, m.expectedPrefetchIndex, actualServerIndex, m.nextItemResolver.resolverDuration)
+        prebufferPrefetchedVideo()
+        if m.transitionWaitingForPrefetch
+          m.transitionWaitingForPrefetch = false
+          m.prefetchWaitWatchdog.control = "stop"
+          promotePrefetchedItem()
+        end if
+      end sub
+
+      sub onNextMediaUrlError(event as object)
+        message = event.getData()
+        if not m.active or not m.nextResolvePending or message = "" then return
+        m.nextResolvePending = false
+        invalidatePrefetch(message)
+      end sub
+
+      sub prebufferPrefetchedVideo()
+        if m.prefetchedItem = invalid or m.prefetchedItem.isAudio then return
+        if not m.dualVideoPrebufferSupported
+          m.prefetchedItem.prebuffered = false
+          return
+        end if
+        standby = standbyVideo()
+        standby.control = "stop"
+        standby.content = m.prefetchedItem.content
+        standby.visible = false
+        m.prefetchedItem.prebuffered = true
+        standby.control = "prebuffer"
+      end sub
+
+      sub invalidatePrefetch(message as string)
+        standby = standbyVideo()
+        standby.control = "stop"
+        standby.content = invalid
+        m.prefetchedItem = invalid
+        m.prefetchFailed = true
+        showPrefetchWarning(message, "The player will retry when the current program ends.")
+        if m.transitionWaitingForPrefetch
+          m.transitionWaitingForPrefetch = false
+          m.prefetchWaitWatchdog.control = "stop"
+          fallbackToNextItem(m.expectedPrefetchIndex)
+        end if
+      end sub
+
+      sub handlePrebufferFailure(message as string)
+        standby = standbyVideo()
+        standby.control = "stop"
+        standby.content = invalid
+        if m.prefetchedItem <> invalid then m.prefetchedItem.prebuffered = false
+        m.prefetchFailed = true
+        if isDualVideoUnsupportedError(message)
+          m.dualVideoPrebufferSupported = false
+          saveDualVideoPrebufferSupport(false)
+          print "[Playback] Dual-video prebuffering disabled on this device: "; message
+          return
+        end if
+        showPrefetchWarning(message, "The cached program will start without prebuffering.")
+      end sub
+
+      function isDualVideoUnsupportedError(message as string) as boolean
+        return instr(1, LCase(message), "only one playing instance supported") > 0
+      end function
+
+      function readDualVideoPrebufferSupport() as boolean
+        section = createObject("roRegistrySection", "PlaybackCapabilities")
+        if section.exists("dual_video_prebuffer") then return section.read("dual_video_prebuffer") <> "false"
+        return true
+      end function
+
+      sub saveDualVideoPrebufferSupport(supported as boolean)
+        section = createObject("roRegistrySection", "PlaybackCapabilities")
+        if supported
+          section.write("dual_video_prebuffer", "true")
+        else
+          section.write("dual_video_prebuffer", "false")
+        end if
+        section.flush()
+      end sub
+
+      sub showPrefetchWarning(message as string, action as string)
+        if m.prefetchWarningActive then return
+        m.prefetchWarningDialog = createObject("roSGNode", "Dialog")
+        m.prefetchWarningDialog.title = "Playback May Be Interrupted"
+        m.prefetchWarningDialog.message = message + " " + action
+        m.prefetchWarningDialog.buttons = [ "OK" ]
+        m.prefetchWarningDialog.observeField("buttonSelected", "onPrefetchWarningClosed")
+        m.prefetchWarningDialog.observeField("wasClosed", "onPrefetchWarningClosed")
+        m.prefetchWarningActive = true
+        m.top.getScene().dialog = m.prefetchWarningDialog
+      end sub
+
+      sub onPrefetchWarningClosed()
+        if m.prefetchWarningDialog <> invalid then m.prefetchWarningDialog.close = true
+        m.prefetchWarningDialog = invalid
+        m.prefetchWarningActive = false
+        if m.active
+          if m.activePlayer = "video"
+            m.video.setFocus(true)
+          else
+            m.top.setFocus(true)
+          end if
+        end if
+      end sub
+
+      function resolvedItem(url as string, title as string, streamFormat as string, description as string, thumbnail as string, length as integer, startPosition as integer, logicalIndex as integer, serverIndex as integer, resolverDuration as float) as object
         content = createObject("roSGNode", "ContentNode")
         content.url = url
         if isAudioUrl(url)
@@ -333,19 +623,46 @@
         content.description = description
         content.HDPosterUrl = thumbnail
         content.httpCertificatesFile = "common:/certs/ca-bundle.crt"
-        m.activeContentTitle = content.title
-        m.activeContentDescription = description
-        m.activeContentThumbnail = thumbnail
-        m.activeContentLength = length
+        if startPosition > 0 then content.PlayStart = startPosition
+        return {
+          content: content
+          url: url
+          title: content.title
+          description: description
+          thumbnail: thumbnail
+          length: length
+          startPosition: startPosition
+          logicalIndex: logicalIndex
+          serverIndex: serverIndex
+          resolverDuration: resolverDuration
+          isAudio: isAudioUrl(url)
+          prebuffered: false
+        }
+      end function
 
-        showStatus("Loading " + content.title + "  (" + (m.currentIndex + 1).toStr() + " of " + m.top.playlist.getChildCount().toStr() + ")")
-        if isAudioUrl(url)
+      sub startResolvedMedia(resolved as object)
+        m.itemStarted = false
+        m.metricsLogged = false
+        m.failurePending = false
+        m.prefetchFailed = false
+        m.liveFallbackAttempts = 0
+        m.liveFallbackFailed = false
+        m.currentServerIndex = resolved.serverIndex
+        m.currentResolverDuration = resolved.resolverDuration
+        m.activeContentTitle = resolved.title
+        m.activeContentDescription = resolved.description
+        m.activeContentThumbnail = resolved.thumbnail
+        m.activeContentLength = resolved.length
+
+        showStatus("Loading " + resolved.title + "  (" + (m.currentIndex + 1).toStr() + " of " + m.top.playlist.getChildCount().toStr() + ")")
+        if resolved.isAudio
           m.activePlayer = "audio"
           m.video.control = "stop"
+          m.video.content = invalid
           hideVideoMetadata()
-          showAudioPanel(content.title, "Loading")
+          showAudioPanel(resolved.title, "Loading")
           m.audio.autoplayAfterSeek = true
-          m.audio.content = content
+          m.audio.content = resolved.content
           m.audio.control = "play"
           refreshAudioStatus()
           m.volumeRefreshTimer.control = "start"
@@ -356,7 +673,8 @@
           hideVideoMetadata()
           m.audio.control = "stop"
           m.volumeRefreshTimer.control = "stop"
-          m.video.content = content
+          m.video.visible = true
+          m.video.content = resolved.content
           m.video.control = "play"
           m.video.setFocus(true)
         end if
@@ -405,9 +723,23 @@
         return cleanTitle
       end function
 
-      sub onVideoState(event as object)
-        if not m.active or m.activePlayer <> "video" then return
-        onPlayerState(event.getData(), m.video)
+      sub onVideoAState(event as object)
+        onVideoSlotState("A", event.getData())
+      end sub
+
+      sub onVideoBState(event as object)
+        onVideoSlotState("B", event.getData())
+      end sub
+
+      sub onVideoSlotState(slot as string, state as string)
+        if not m.active then return
+        if slot <> m.currentVideoSlot
+          if state = "error" and m.prefetchedItem <> invalid and m.prefetchedItem.prebuffered
+            handlePrebufferFailure(playbackErrorMessage(videoForSlot(slot)))
+          end if
+          return
+        end if
+        if m.activePlayer = "video" then onPlayerState(state, videoForSlot(slot))
       end sub
 
       sub onAudioState(event as object)
@@ -419,12 +751,18 @@
         if state = "playing"
           m.itemStarted = true
           m.loadWatchdog.control = "stop"
+          if not m.metricsLogged
+            m.metricsLogged = true
+            logPlaybackMetrics(player)
+          end if
           if m.activePlayer = "video"
             hideStatus()
+            maybePrefetchNext(player.position, player.duration)
           else
             hideStatus()
             showAudioPanel(m.activeContentTitle, "Playing")
             updateAudioProgress()
+            maybePrefetchNext(player.position, player.duration)
           end if
         else if state = "paused" and m.activePlayer = "audio"
           showAudioPanel(m.activeContentTitle, "Paused")
@@ -467,13 +805,144 @@
           endPlayback("finished")
           return
         end if
-        m.currentIndex++
-        if m.currentIndex >= m.top.playlist.getChildCount()
-          endPlayback("finished")
-        else
-          playCurrent()
+        if m.liveFallbackFailed
+          endPlayback("error")
+          return
         end if
+        nextIndex = nextLogicalIndex()
+        if nextIndex < 0
+          endPlayback("finished")
+          return
+        end if
+        if m.prefetchedItem <> invalid and m.prefetchedItem.logicalIndex = nextIndex
+          promotePrefetchedItem()
+          return
+        end if
+        if m.nextResolvePending
+          m.transitionWaitingForPrefetch = true
+          showStatus("Preparing the next program...")
+          m.prefetchWaitWatchdog.control = "start"
+          return
+        end if
+        fallbackToNextItem(nextIndex)
       end sub
+
+      sub fallbackToNextItem(nextIndex as integer)
+        if nextIndex < 0
+          endPlayback("finished")
+          return
+        end if
+        m.currentIndex = nextIndex
+        if m.top.playbackMode <> "live"
+          playCurrent()
+          return
+        end if
+
+        item = m.top.playlist.getChild(nextIndex)
+        if item = invalid
+          endPlayback("finished")
+          return
+        end if
+        m.expectedPrefetchIndex = nextIndex
+        m.expectedServerIndex = expectedNextServerIndex()
+        resolverUri = nextResolverUri(item)
+        if resolverUri = ""
+          skipFailedItem("The next Live TV resolver URL is missing.")
+          return
+        end if
+        m.resolvePending = true
+        m.currentResolveAdvancesLive = true
+        showStatus("Selecting the next live program...")
+        m.currentItemResolver.control = "stop"
+        m.currentItemResolver.uri = resolverUri
+        m.currentItemResolver.control = "run"
+      end sub
+
+      sub onPrefetchWaitTimeout()
+        if not m.active or not m.transitionWaitingForPrefetch then return
+        m.transitionWaitingForPrefetch = false
+        m.nextResolvePending = false
+        m.nextItemResolver.control = "stop"
+        invalidatePrefetch("The next program reservation timed out.")
+        fallbackToNextItem(m.expectedPrefetchIndex)
+      end sub
+
+      sub promotePrefetchedItem()
+        resolved = m.prefetchedItem
+        m.prefetchedItem = invalid
+        m.currentIndex = resolved.logicalIndex
+        if m.top.playbackMode = "live" then m.liveUsesClockNext = false
+
+        if resolved.isAudio
+          startResolvedMedia(resolved)
+          return
+        end if
+
+        if not resolved.prebuffered
+          m.video.control = "stop"
+          m.video.content = invalid
+          startResolvedMedia(resolved)
+          return
+        end if
+
+        oldVideo = m.video
+        if m.currentVideoSlot = "A"
+          m.currentVideoSlot = "B"
+          m.video = m.videoB
+          m.videoTrickPlayBar = m.videoBTrickPlayBar
+        else
+          m.currentVideoSlot = "A"
+          m.video = m.videoA
+          m.videoTrickPlayBar = m.videoATrickPlayBar
+        end if
+
+        m.itemStarted = false
+        m.metricsLogged = false
+        m.failurePending = false
+        m.currentServerIndex = resolved.serverIndex
+        m.currentResolverDuration = resolved.resolverDuration
+        m.activeContentTitle = resolved.title
+        m.activeContentDescription = resolved.description
+        m.activeContentThumbnail = resolved.thumbnail
+        m.activeContentLength = resolved.length
+        hideAudioPanel()
+        hideVideoMetadata()
+        m.audio.control = "stop"
+        m.volumeRefreshTimer.control = "stop"
+
+        oldVideo.visible = false
+        oldVideo.control = "stop"
+        oldVideo.content = invalid
+        m.video.visible = true
+        m.video.control = "play"
+        m.activePlayer = "video"
+        m.video.setFocus(true)
+        m.loadWatchdog.control = "start"
+      end sub
+
+      function standbyVideo() as object
+        if m.currentVideoSlot = "A" then return m.videoB
+        return m.videoA
+      end function
+
+      function videoForSlot(slot as string) as object
+        if slot = "A" then return m.videoA
+        return m.videoB
+      end function
+
+      sub logPlaybackMetrics(player as object)
+        info = invalid
+        if player <> invalid then info = player.playStartInfo
+        totalDuration = metricValue(info, "total_dur")
+        manifestDuration = metricValue(info, "manifest_dur")
+        prebufferDuration = metricValue(info, "prebuf_dur")
+        print "[PlaybackMetrics] resolver_dur="; m.currentResolverDuration; " total_dur="; totalDuration; " manifest_dur="; manifestDuration; " prebuf_dur="; prebufferDuration
+      end sub
+
+      function metricValue(info as dynamic, key as string) as float
+        if type(info) = "roAssociativeArray" and info.doesExist(key) and info[key] <> invalid then return info[key]
+        return -1
+      end function
 
       function activePlayerNode() as object
         if m.activePlayer = "audio" then return m.audio
@@ -539,7 +1008,10 @@
       end function
 
       sub onAudioPositionChanged()
-        if m.active and m.activePlayer = "audio" then updateAudioProgress()
+        if m.active and m.activePlayer = "audio"
+          updateAudioProgress()
+          maybePrefetchNext(m.audio.position, m.audio.duration)
+        end if
       end sub
 
       sub updateAudioProgress()
@@ -603,8 +1075,9 @@
       end sub
 
       sub onVideoPositionChanged()
-        if m.active and m.activePlayer = "video" and m.videoMetadataPanel.visible
-          updateVideoProgress()
+        if m.active and m.activePlayer = "video"
+          maybePrefetchNext(m.video.position, m.video.duration)
+          if m.videoMetadataPanel.visible then updateVideoProgress()
         end if
       end sub
 
@@ -627,8 +1100,17 @@
         m.videoTime.text = formatTime(position) + " / " + formatTime(duration)
       end sub
 
-      sub onVideoTrickPlayBarVisibilityChanged(event as object)
-        if m.active and m.activePlayer = "video" and event.getData()
+      sub onVideoATrickPlayBarVisibilityChanged(event as object)
+        onVideoTrickPlayBarVisibilityChanged("A", event.getData())
+      end sub
+
+      sub onVideoBTrickPlayBarVisibilityChanged(event as object)
+        onVideoTrickPlayBarVisibilityChanged("B", event.getData())
+      end sub
+
+      sub onVideoTrickPlayBarVisibilityChanged(slot as string, visible as boolean)
+        if slot <> m.currentVideoSlot then return
+        if m.active and m.activePlayer = "video" and visible
           showVideoMetadata()
         else
           hideVideoMetadata()
@@ -709,15 +1191,29 @@
       sub endPlayback(reason as string)
         m.active = false
         m.resolvePending = false
+        m.nextResolvePending = false
+        m.prefetchedItem = invalid
+        m.prefetchFailed = false
+        m.transitionWaitingForPrefetch = false
+        m.currentResolveAdvancesLive = false
+        m.liveFallbackAttempts = 0
+        m.liveFallbackFailed = false
         m.itemStarted = false
         m.failurePending = false
         m.activePlayer = ""
-        m.mediaUrlTask.control = "stop"
+        m.currentItemResolver.control = "stop"
+        m.nextItemResolver.control = "stop"
         m.loadWatchdog.control = "stop"
+        m.prefetchWaitWatchdog.control = "stop"
         m.skipTimer.control = "stop"
         m.volumeRefreshTimer.control = "stop"
         m.audioStatusTask.control = "stop"
-        m.video.control = "stop"
+        m.videoA.control = "stop"
+        m.videoB.control = "stop"
+        m.videoA.content = invalid
+        m.videoB.content = invalid
+        m.videoA.visible = true
+        m.videoB.visible = false
         m.audio.control = "stop"
         hideAudioPanel()
         hideVideoMetadata()
@@ -725,6 +1221,11 @@
         if m.exitDialogActive
           m.exitDialogActive = false
           m.exitDialog.close = true
+        end if
+        if m.prefetchWarningActive
+          m.prefetchWarningActive = false
+          if m.prefetchWarningDialog <> invalid then m.prefetchWarningDialog.close = true
+          m.prefetchWarningDialog = invalid
         end if
         m.top.exitReason = reason
         m.top.playbackEnded = true

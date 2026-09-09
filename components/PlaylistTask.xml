@@ -102,6 +102,7 @@
             end if
             item.addFields({
               resolveUrl: ensureTrailingSlash(m.top.resolverUri) + resolverIndex.toStr()
+              resolverIndex: resolverIndex
               metadataLength: jsonInteger(serverItem, "length", -1)
             })
             item.title = jsonString(serverItem, "title")
@@ -110,7 +111,7 @@
             if item.title = "" then item.title = item.url
             if item.description = "" then item.description = jsonString(envelope, "channel")
           else
-            item.addFields({ resolveUrl: m.top.resolverUri, metadataLength: -1 })
+            item.addFields({ resolveUrl: m.top.resolverUri, resolverIndex: -1, metadataLength: -1 })
             item.title = "Shuffled program " + (index + 1).toStr()
           end if
           item.streamFormat = jsonString(serverItem, "streamFormat")
@@ -309,7 +310,7 @@
 
       sub appendEntry(parent as object, url as string, title as string, description as string, thumbnail as string, length as integer)
         item = createObject("roSGNode", "ContentNode")
-        item.addFields({ resolveUrl: "", metadataLength: length })
+        item.addFields({ resolveUrl: "", resolverIndex: -1, metadataLength: length })
         item.url = resolveEntryUrl(url)
         item.title = title
         if item.title = "" then item.title = "Playlist item " + (parent.getChildCount() + 1).toStr()

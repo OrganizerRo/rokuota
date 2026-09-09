@@ -3,6 +3,7 @@
   <interface>
     <field id="closeRequested" type="boolean" alwaysNotify="true" />
     <field id="settingsRequested" type="boolean" alwaysNotify="true" />
+    <field id="viewRequested" type="string" alwaysNotify="true" />
     <field id="focusRequested" type="boolean" alwaysNotify="true" />
   </interface>
 
@@ -18,53 +19,53 @@
         uri="pkg:/images/icon_focus_hd.jpg"
         loadDisplayMode="scaleToFit" />
 
-      <Rectangle
-        id="settingsButton"
-        translation="[0,980]"
-        width="400"
-        height="80"
-        color="#00000000">
-        <Rectangle
-          id="settingsFocusBg"
-          width="380"
-          height="70"
-          translation="[10,5]"
-          color="#2A3A4E"
-          visible="false" />
-        <Label
-          translation="[60,22]"
-          text="Settings"
-          font="font:MediumBoldSystemFont"
-          color="#FFFFFF" />
-      </Rectangle>
+      <LabelList
+        id="menuList"
+        translation="[20,280]"
+        itemSize="[360,80]"
+        numRows="3"
+        drawFocusFeedback="true"
+        vertFocusAnimationStyle="floatingFocus" />
     </Rectangle>
   </children>
 
   <script type="text/brightscript">
     <![CDATA[
       sub init()
-        m.settingsFocusBg = m.top.findNode("settingsFocusBg")
+        m.menuList = m.top.findNode("menuList")
+        m.menuList.observeField("itemSelected", "onItemSelected")
         m.top.observeField("focusRequested", "onFocusRequested")
-        m.top.observeField("focusedChild", "onFocusChanged")
+        buildMenuContent()
+      end sub
+
+      sub buildMenuContent()
+        content = createObject("roSGNode", "ContentNode")
+        for each title in [ "On Demand", "Live TV", "Settings" ]
+          item = content.createChild("ContentNode")
+          item.title = title
+        end for
+        m.menuList.content = content
       end sub
 
       sub onFocusRequested()
-        m.top.setFocus(true)
-        m.settingsFocusBg.visible = true
+        m.menuList.setFocus(true)
       end sub
 
-      sub onFocusChanged()
-        m.settingsFocusBg.visible = m.top.hasFocus()
+      sub onItemSelected(event as object)
+        index = event.getData()
+        if index = 0
+          m.top.viewRequested = "onDemand"
+        else if index = 1
+          m.top.viewRequested = "liveTV"
+        else if index = 2
+          m.top.settingsRequested = true
+        end if
       end sub
 
       function onKeyEvent(key as string, press as boolean) as boolean
         if not press then return false
         if key = "left" or key = "back" or key="right"
           m.top.closeRequested = true
-          return true
-        end if
-        if key = "OK"
-          m.top.settingsRequested = true
           return true
         end if
         return true

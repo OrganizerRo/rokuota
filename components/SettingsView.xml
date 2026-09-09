@@ -26,22 +26,28 @@
       font="font:MediumSystemFont"
       color="#9DB0C3" />
 
-    <MarkupList
-      id="settingsList"
+    <Label
       translation="[110,190]"
+      width="600"
+      height="32"
+      text="CONNECTION"
+      font="font:SmallBoldSystemFont"
+      color="#9DB0C3" />
+
+    <MarkupList
+      id="serverList"
+      translation="[110,235]"
       itemSize="[600,80]"
-      itemSpacing="[0,8]"
-      numRows="8"
+      numRows="1"
       drawFocusFeedback="true"
-      vertFocusAnimationStyle="floatingFocus"
       itemComponentName="SettingsItemRenderer" />
   </children>
 
   <script type="text/brightscript">
     <![CDATA[
       sub init()
-        m.settingsList = m.top.findNode("settingsList")
-        m.settingsList.observeField("itemSelected", "onItemSelected")
+        m.serverList = m.top.findNode("serverList")
+        m.serverList.observeField("itemSelected", "onServerSelected")
         m.top.observeField("focusRequested", "onFocusRequested")
         m.top.observeField("serverUrl", "onServerUrlChanged")
         m.editingIndex = -1
@@ -49,11 +55,11 @@
       end sub
 
       sub buildSettingsContent()
-        content = createObject("roSGNode", "ContentNode")
-        serverItem = content.createChild("ContentNode")
+        serverContent = createObject("roSGNode", "ContentNode")
+        serverItem = serverContent.createChild("ContentNode")
         serverItem.title = "Server URL"
         serverItem.description = m.top.serverUrl
-        m.settingsList.content = content
+        m.serverList.content = serverContent
       end sub
 
       sub onServerUrlChanged()
@@ -61,15 +67,12 @@
       end sub
 
       sub onFocusRequested()
-        m.settingsList.setFocus(true)
+        m.serverList.setFocus(true)
       end sub
 
-      sub onItemSelected(event as object)
-        index = event.getData()
-        if index = 0
-          m.editingIndex = 0
-          showKeyboard("Server URL", m.top.serverUrl)
-        end if
+      sub onServerSelected()
+        m.editingIndex = 0
+        showKeyboard("Server URL", m.top.serverUrl)
       end sub
 
       sub showKeyboard(title as string, currentValue as string)
@@ -99,7 +102,7 @@
       sub onKeyboardClosed()
         m.keyboardDialog = invalid
         m.editingIndex = -1
-        m.settingsList.setFocus(true)
+        m.serverList.setFocus(true)
       end sub
 
       sub saveSetting(key as string, value as string)

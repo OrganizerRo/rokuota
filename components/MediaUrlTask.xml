@@ -9,6 +9,9 @@
     <field id="mediaDescription" type="string" />
     <field id="mediaThumbnail" type="string" />
     <field id="mediaLength" type="integer" value="-1" />
+    <field id="positionSeconds" type="integer" value="0" />
+    <field id="playlistIndex" type="integer" value="-1" />
+    <field id="resolverDuration" type="float" value="0" />
     <field id="errorMessage" type="string" alwaysNotify="true" />
   </interface>
 
@@ -19,6 +22,8 @@
       end sub
 
       sub resolveMediaUrl()
+        resolverTimer = createObject("roTimespan")
+        resolverTimer.mark()
         m.top.errorMessage = ""
         m.top.mediaUrl = ""
         m.top.streamFormat = ""
@@ -26,6 +31,9 @@
         m.top.mediaDescription = ""
         m.top.mediaThumbnail = ""
         m.top.mediaLength = -1
+        m.top.positionSeconds = 0
+        m.top.playlistIndex = -1
+        m.top.resolverDuration = 0
         if m.top.uri = ""
           m.top.errorMessage = "The channel media resolver URL is missing."
           return
@@ -60,7 +68,7 @@
         body = event.getString().trim()
         code = event.getResponseCode()
 
-        if code < 200 or code >= 300
+        if code <> 200
           m.top.errorMessage = "Media URL resolution failed with HTTP " + code.toStr() + "."
           return
         end if
@@ -114,7 +122,21 @@
             if length >= 0 then m.top.mediaLength = length
           end if
         end if
+        if response.doesExist("positionSeconds")
+          positionType = type(response.positionSeconds)
+          if positionType = "Integer" or positionType = "LongInteger" or positionType = "Float" or positionType = "Double"
+            positionSeconds = int(response.positionSeconds)
+            if positionSeconds > 0 then m.top.positionSeconds = positionSeconds
+          end if
+        end if
+        if response.doesExist("playlistIndex")
+          indexType = type(response.playlistIndex)
+          if indexType = "Integer" or indexType = "LongInteger" or indexType = "Float" or indexType = "Double"
+            m.top.playlistIndex = int(response.playlistIndex)
+          end if
+        end if
         m.top.streamFormat = streamFormat
+        m.top.resolverDuration = resolverTimer.totalMilliseconds() / 1000.0
         m.top.mediaUrl = mediaUrl
       end sub
 

@@ -34,7 +34,7 @@ echo.
 
 echo [2/3] Running BrighterScript compiler (validation mode)...
 echo.
-npx brighterscript@latest --project bsconfig.json --create-package false
+call npx.cmd brighterscript@latest --project bsconfig.json --create-package false
 if %errorlevel% neq 0 (
     echo.
     echo ============================================
@@ -47,7 +47,7 @@ echo.
 echo [3/3] Building output package...
 echo.
 if not exist "out" mkdir out
-npx brighterscript@latest --project bsconfig.json
+call npx.cmd brighterscript@latest --project bsconfig.json
 if %errorlevel% neq 0 (
     echo.
     echo ============================================

@@ -6,6 +6,7 @@ channel_catalog_url=
 channel_catalog_timeout_seconds=5
 default_channel=
 default_channel_back_destination=home
+live_guide_back_destination=onDemand
 guide_backdrop_opacity=0.25
 guide_foreground_opacity=1.0
 guide_item_opacity=0.80

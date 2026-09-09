@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="LiveGuideTask" extends="Task">
+  <interface>
+    <field id="uri" type="string" />
+    <field id="timeoutSeconds" type="integer" value="10" />
+    <field id="guide" type="node" />
+    <field id="errorMessage" type="string" />
+  </interface>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.top.functionName = "loadGuide"
+      end sub
+
+      sub loadGuide()
+        m.top.errorMessage = ""
+        if m.top.uri = ""
+          m.top.errorMessage = "The Live TV guide URL is not configured."
+          return
+        end if
+
+        response = fetchText(m.top.uri)
+        if response.error <> ""
+          m.top.errorMessage = response.error
+          return
+        end if
+
+        channels = ParseJson(response.body)
+        if type(channels) <> "roArray"
+          m.top.errorMessage = "The Live TV guide API must return a JSON array."
+          return
+        end if
+
+        guide = createObject("roSGNode", "ContentNode")
+        for each channel in channels
+          if type(channel) = "roAssociativeArray" then appendChannel(guide, channel)
+        end for
+
+        if guide.getChildCount() = 0
+          m.top.errorMessage = "The Live TV guide returned no usable channels."
+          return
+        end if
+        m.top.guide = guide
+      end sub
+
+      function fetchText(uri as string) as object
+        transfer = createObject("roUrlTransfer")
+        transfer.setCertificatesFile("common:/certs/ca-bundle.crt")
+        transfer.initClientCertificates()
+        transfer.setUrl(uri)
+        port = createObject("roMessagePort")
+        transfer.setMessagePort(port)
+
+        if not transfer.asyncGetToString()
+          return { body: "", error: "The Live TV guide request could not be started." }
+        end if
+
+        timeoutSeconds = m.top.timeoutSeconds
+        if timeoutSeconds <= 0 then timeoutSeconds = 10
+        event = wait(timeoutSeconds * 1000, port)
+        if event = invalid
+          transfer.asyncCancel()
+          return { body: "", error: "The Live TV guide did not respond within " + timeoutSeconds.toStr() + " seconds." }
+        end if
+        if type(event) <> "roUrlEvent"
+          transfer.asyncCancel()
+          return { body: "", error: "The Live TV guide returned an unexpected network event." }
+        end if
+
+        code = event.getResponseCode()
+        body = event.getString()
+        if code < 200 or code >= 300
+          return { body: "", error: "Live TV guide request failed with HTTP " + code.toStr() + "." }
+        end if
+        if body = "" then return { body: "", error: "The Live TV guide response was empty." }
+        return { body: body, error: "" }
+      end function
+
+      sub appendChannel(parent as object, channel as object)
+        title = jsonString(channel, "title")
+        if title = "" or not channel.doesExist("entries") or type(channel.entries) <> "roArray" then return
+        if channel.entries.count() = 0 then return
+
+        item = createObject("roSGNode", "ContentNode")
+        item.addFields({ liveUrl: liveUrl(title) })
+        item.title = title
+        item.description = jsonString(channel, "description")
+        item.HDPosterUrl = resolveUrl(jsonString(channel, "thumbnail"))
+
+        for index = 0 to channel.entries.count() - 1
+          entry = channel.entries[index]
+          if type(entry) = "roAssociativeArray" then appendProgram(item, channel.entries, index, entry)
+        end for
+        if item.getChildCount() > 0 then parent.appendChild(item)
+      end sub
+
+      sub appendProgram(parent as object, entries as object, index as integer, entry as object)
+        title = jsonString(entry, "title")
+        if title = "" then title = "Program " + (index + 1).toStr()
+        startTime = jsonString(entry, "starttime")
+        durationSeconds = programDuration(entries, index)
+
+        program = createObject("roSGNode", "ContentNode")
+        program.addFields({
+          programIndex: jsonInteger(entry, "index", index)
+          startTimeRaw: startTime
+          startTimeText: formatStartTime(startTime)
+          startTimeSeconds: timestampSeconds(startTime)
+          durationSeconds: durationSeconds
+        })
+        program.title = title
+        program.description = jsonString(entry, "description")
+        program.url = jsonString(entry, "program")
+        program.HDPosterUrl = resolveUrl(jsonString(entry, "thumbnail"))
+        parent.appendChild(program)
+      end sub
+
+      function programDuration(entries as object, index as integer) as integer
+        current = entries[index]
+        currentTime = timestampSeconds(jsonString(current, "starttime"))
+        if index + 1 < entries.count()
+          nextEntry = entries[index + 1]
+          nextTime = timestampSeconds(jsonString(nextEntry, "starttime"))
+          if currentTime >= 0 and nextTime > currentTime then return nextTime - currentTime
+        end if
+        remaining = jsonInteger(current, "remainingSeconds", 0)
+        if remaining > 0 then return remaining
+        return 1800
+      end function
+
+      function timestampSeconds(value as string) as integer
+        if value.len() < 19 then return -1
+        year = value.mid(0, 4).toInt()
+        month = value.mid(5, 2).toInt()
+        day = value.mid(8, 2).toInt()
+        hour = value.mid(11, 2).toInt()
+        minute = value.mid(14, 2).toInt()
+        second = value.mid(17, 2).toInt()
+        if year < 1970 or month < 1 or month > 12 or day < 1 or day > 31 then return -1
+
+        days = 0
+        for currentYear = 1970 to year - 1
+          days += 365
+          if isLeapYear(currentYear) then days++
+        end for
+        monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        if isLeapYear(year) then monthDays[1] = 29
+        if month > 1
+          for currentMonth = 0 to month - 2
+            days += monthDays[currentMonth]
+          end for
+        end if
+        days += day - 1
+        return days * 86400 + hour * 3600 + minute * 60 + second
+      end function
+
+      function isLeapYear(year as integer) as boolean
+        return (year mod 4 = 0 and year mod 100 <> 0) or year mod 400 = 0
+      end function
+
+      function formatStartTime(value as string) as string
+        if value.len() < 16 then return ""
+        hour = value.mid(11, 2).toInt()
+        minuteText = value.mid(14, 2)
+        suffix = "AM"
+        if hour >= 12 then suffix = "PM"
+        displayHour = hour mod 12
+        if displayHour = 0 then displayHour = 12
+        return displayHour.toStr() + ":" + minuteText + " " + suffix
+      end function
+
+      function liveUrl(channelTitle as string) as string
+        parts = m.top.uri.split("/")
+        if parts.count() < 3 then return ""
+        transfer = createObject("roUrlTransfer")
+        return parts[0] + "//" + parts[2] + "/" + transfer.escape(channelTitle) + "/live"
+      end function
+
+      function resolveUrl(value as string) as string
+        if value = "" then return ""
+        lowerValue = LCase(value)
+        if lowerValue.left(7) = "http://" or lowerValue.left(8) = "https://" then return value
+        parts = m.top.uri.split("/")
+        if parts.count() < 3 then return value
+        if value.left(1) = "/" then return parts[0] + "//" + parts[2] + value
+        return parts[0] + "//" + parts[2] + "/" + value
+      end function
+
+      function jsonString(value as dynamic, key as string) as string
+        if type(value) <> "roAssociativeArray" or not value.doesExist(key) or value[key] = invalid then return ""
+        valueType = type(value[key])
+        if valueType = "roString" or valueType = "String" then return value[key].trim()
+        return ""
+      end function
+
+      function jsonInteger(value as dynamic, key as string, fallback as integer) as integer
+        if type(value) <> "roAssociativeArray" or not value.doesExist(key) or value[key] = invalid then return fallback
+        valueType = type(value[key])
+        if valueType = "Integer" or valueType = "LongInteger" or valueType = "Float" or valueType = "Double"
+          return int(value[key])
+        end if
+        return fallback
+      end function
+    ]]>
+  </script>
+</component>

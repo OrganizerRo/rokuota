@@ -5,6 +5,7 @@
   </interface>
   <children>
     <TVGuide id="tvGuide" />
+    <LiveTVGuide id="liveTVGuide" visible="false" />
     <PlaylistGuide id="playlistGuide" visible="false" />
     <Video
       id="errorStaticVideo"
@@ -17,6 +18,7 @@
     <SideMenu id="sideMenu" visible="false" />
     <SettingsView id="settingsView" visible="false" />
     <ChannelCatalogTask id="catalogTask" />
+    <LiveGuideTask id="liveGuideTask" />
     <PlaylistTask id="playlistTask" />
     <Timer id="playlistLoadWatchdog" duration="20" repeat="false" />
   </children>
@@ -25,31 +27,40 @@
     <![CDATA[
       sub init()
         m.tvGuide = m.top.findNode("tvGuide")
+        m.liveTVGuide = m.top.findNode("liveTVGuide")
         m.errorStaticVideo = m.top.findNode("errorStaticVideo")
         m.playlistGuide = m.top.findNode("playlistGuide")
         m.videoComponent = m.top.findNode("videoComponent")
         m.sideMenu = m.top.findNode("sideMenu")
         m.settingsView = m.top.findNode("settingsView")
         m.catalogTask = m.top.findNode("catalogTask")
+        m.liveGuideTask = m.top.findNode("liveGuideTask")
         m.playlistTask = m.top.findNode("playlistTask")
         m.playlistLoadWatchdog = m.top.findNode("playlistLoadWatchdog")
 
         m.loadingDialog = invalid
         m.errorDialog = invalid
         m.menuReturnTarget = "tvGuide"
+        m.activeGuide = "onDemand"
+        m.errorReturnTarget = ""
 
         m.tvGuide.observeField("channelSelected", "onChannelSelected")
         m.tvGuide.observeField("channelBrowseRequested", "onChannelBrowseRequested")
         m.tvGuide.observeField("menuRequested", "onTvGuideMenuRequested")
+        m.liveTVGuide.observeField("channelSelected", "onLiveChannelSelected")
+        m.liveTVGuide.observeField("menuRequested", "onLiveGuideMenuRequested")
         m.playlistGuide.observeField("itemSelected", "onPlaylistItemSelected")
         m.playlistGuide.observeField("closeRequested", "onPlaylistGuideClosed")
         m.playlistGuide.observeField("menuRequested", "onPlaylistGuideMenuRequested")
         m.sideMenu.observeField("closeRequested", "onSideMenuClosed")
         m.sideMenu.observeField("settingsRequested", "onSettingsRequested")
+        m.sideMenu.observeField("viewRequested", "onViewRequested")
         m.settingsView.observeField("closeRequested", "onSettingsViewClosed")
         m.settingsView.observeField("settingChanged", "onSettingChanged")
         m.catalogTask.observeField("catalog", "onCatalogLoaded")
         m.catalogTask.observeField("errorMessage", "onCatalogError")
+        m.liveGuideTask.observeField("guide", "onLiveGuideLoaded")
+        m.liveGuideTask.observeField("errorMessage", "onLiveGuideError")
         m.playlistTask.observeField("playlist", "onPlaylistLoaded")
         m.playlistTask.observeField("errorMessage", "onPlaylistError")
         m.playlistLoadWatchdog.observeField("fire", "onPlaylistLoadTimeout")
@@ -68,6 +79,14 @@
         if backDestinationValue <> invalid and LCase(backDestinationValue.trim()) = "guide"
           m.defaultChannelBackDestination = "guide"
         end if
+        m.liveGuideBackDestination = "onDemand"
+        liveGuideBackValue = appInfo.getValue("live_guide_back_destination")
+        if liveGuideBackValue <> invalid
+          normalizedDestination = LCase(liveGuideBackValue.trim())
+          if normalizedDestination = "menu" or normalizedDestination = "home"
+            m.liveGuideBackDestination = normalizedDestination
+          end if
+        end if
         m.defaultChannelPlayback = false
         catalogTimeout = 0
         catalogTimeoutValue = appInfo.getValue("channel_catalog_timeout_seconds")
@@ -84,6 +103,9 @@
         if catalog = invalid then return
         closeLoading()
         m.tvGuide.content = catalog
+        m.activeGuide = "onDemand"
+        m.errorReturnTarget = ""
+        showGuide("onDemand")
         defaultChannelIndex = findDefaultChannel(catalog, m.defaultChannel)
         if defaultChannelIndex >= 0
           m.defaultChannelPlayback = true
@@ -148,6 +170,22 @@
         if message <> "" then showApiError(message)
       end sub
 
+      sub onLiveGuideLoaded(event as object)
+        guide = event.getData()
+        if guide = invalid then return
+        closeLoading()
+        m.liveTVGuide.content = guide
+        m.activeGuide = "liveTV"
+        m.errorReturnTarget = ""
+        showGuide("liveTV")
+        focusLiveGuide()
+      end sub
+
+      sub onLiveGuideError(event as object)
+        message = event.getData()
+        if message <> "" then showApiError(message)
+      end sub
+
       sub onChannelSelected(event as object)
         m.defaultChannelPlayback = false
         loadChannel(event.getData(), false)
@@ -156,6 +194,28 @@
       sub onChannelBrowseRequested(event as object)
         m.defaultChannelPlayback = false
         loadChannel(event.getData(), true)
+      end sub
+
+      sub onLiveChannelSelected(event as object)
+        m.errorReturnTarget = ""
+        if m.liveTVGuide.content = invalid then return
+        index = event.getData()
+        if index < 0 or index >= m.liveTVGuide.content.getChildCount() then return
+        channel = m.liveTVGuide.content.getChild(index)
+        if channel = invalid or channel.liveUrl = ""
+          showError("The selected Live TV channel has no playback URL.")
+          return
+        end if
+
+        playlist = createObject("roSGNode", "ContentNode")
+        item = playlist.createChild("ContentNode")
+        item.addFields({ resolveUrl: channel.liveUrl, metadataLength: -1 })
+        item.title = channel.title
+        item.description = channel.description
+        item.HDPosterUrl = channel.HDPosterUrl
+        m.selectedChannel = channel
+        m.defaultChannelPlayback = false
+        startPlayback(playlist, 0, false, "liveTVGuide")
       end sub
 
       sub loadChannel(index as integer, browseMode as boolean)
@@ -229,11 +289,23 @@
       sub startPlayback(playlist as object, startIndex as integer, singleItem as boolean, returnTarget as string)
         m.playbackReturnTarget = returnTarget
         m.tvGuide.visible = false
+        m.liveTVGuide.visible = false
         m.playlistGuide.visible = false
         m.videoComponent.visible = true
         m.videoComponent.startIndex = startIndex
         m.videoComponent.singleItem = singleItem
-        if m.defaultChannelPlayback and m.defaultChannelBackDestination = "home"
+        m.videoComponent.loopPlaylist = (returnTarget = "liveTVGuide")
+        m.videoComponent.playbackMode = "onDemand"
+        m.videoComponent.livePlaylistCount = 0
+        if returnTarget = "liveTVGuide"
+          m.videoComponent.playbackMode = "live"
+          if m.selectedChannel <> invalid then m.videoComponent.livePlaylistCount = livePlaylistSize(m.selectedChannel)
+        else if not singleItem and m.selectedChannel <> invalid and m.selectedChannel.playlistType = "server-random"
+          m.videoComponent.playbackMode = "shuffle"
+        end if
+        if returnTarget = "liveTVGuide"
+          m.videoComponent.exitDestinationLabel = "Live TV"
+        else if m.defaultChannelPlayback and m.defaultChannelBackDestination = "home"
           m.videoComponent.exitDestinationLabel = "Roku Home"
         else
           m.videoComponent.exitDestinationLabel = "TV Guide"
@@ -243,6 +315,15 @@
         m.videoComponent.playbackRequested = true
         m.videoComponent.setFocus(true)
       end sub
+
+      function livePlaylistSize(channel as object) as integer
+        highestIndex = -1
+        for index = 0 to channel.getChildCount() - 1
+          program = channel.getChild(index)
+          if program <> invalid and program.programIndex > highestIndex then highestIndex = program.programIndex
+        end for
+        return highestIndex + 1
+      end function
 
       sub onPlaylistError(event as object)
         message = event.getData()
@@ -264,11 +345,14 @@
           return
         end if
         m.defaultChannelPlayback = false
-        if m.playbackReturnTarget = "playlistGuide" and m.channelPlaylist <> invalid
+        if m.playbackReturnTarget = "liveTVGuide"
+          showGuide("liveTV")
+          focusLiveGuide()
+        else if m.playbackReturnTarget = "playlistGuide" and m.channelPlaylist <> invalid
           m.playlistGuide.visible = true
           focusPlaylistGuide()
         else
-          m.tvGuide.visible = true
+          showGuide("onDemand")
           focusTvGuide()
         end if
       end sub
@@ -309,6 +393,7 @@
         staticContent.streamFormat = "mp4"
 
         m.tvGuide.visible = false
+        m.liveTVGuide.visible = false
         m.playlistGuide.visible = false
         m.videoComponent.visible = false
         m.errorStaticVideo.visible = true
@@ -326,12 +411,21 @@
         if m.errorStaticVideo.visible
           m.errorStaticVideo.control = "stop"
           m.errorStaticVideo.visible = false
-          m.tvGuide.visible = true
         end if
         if m.videoComponent.visible
           m.videoComponent.setFocus(true)
+        else if m.errorReturnTarget = "settings"
+          m.errorReturnTarget = ""
+          m.settingsView.serverUrl = m.serverUrl
+          m.settingsView.visible = true
+          m.settingsView.focusRequested = true
         else
-          focusTvGuide()
+          showGuide(m.activeGuide)
+          if m.activeGuide = "liveTV"
+            focusLiveGuide()
+          else
+            focusTvGuide()
+          end if
         end if
       end sub
 
@@ -343,6 +437,18 @@
       sub focusPlaylistGuide()
         m.playlistGuide.setFocus(true)
         m.playlistGuide.focusRequested = true
+      end sub
+
+      sub focusLiveGuide()
+        m.liveTVGuide.setFocus(true)
+        m.liveTVGuide.focusRequested = true
+      end sub
+
+      sub showGuide(guideName as string)
+        m.tvGuide.visible = (guideName = "onDemand")
+        m.liveTVGuide.visible = (guideName = "liveTV")
+        m.playlistGuide.visible = false
+        m.settingsView.visible = false
       end sub
 
       function resolveServerUrl(manifestUrl as string) as string
@@ -379,6 +485,11 @@
         showSideMenu()
       end sub
 
+      sub onLiveGuideMenuRequested()
+        m.menuReturnTarget = "liveTVGuide"
+        showSideMenu()
+      end sub
+
       sub showSideMenu()
         m.sideMenu.visible = true
         m.sideMenu.focusRequested = true
@@ -388,6 +499,8 @@
         m.sideMenu.visible = false
         if m.menuReturnTarget = "playlistGuide"
           focusPlaylistGuide()
+        else if m.menuReturnTarget = "liveTVGuide"
+          focusLiveGuide()
         else
           focusTvGuide()
         end if
@@ -405,15 +518,76 @@
         showSideMenu()
       end sub
 
+      sub onViewRequested(event as object)
+        requestedView = event.getData()
+        if requestedView = "onDemand"
+          loadOnDemandGuide()
+        else if requestedView = "liveTV"
+          loadLiveGuide()
+        end if
+      end sub
+
+      sub loadOnDemandGuide()
+        m.sideMenu.visible = false
+        m.settingsView.visible = false
+        m.activeGuide = "onDemand"
+        m.errorReturnTarget = "settings"
+        m.catalogTask.control = "stop"
+        showLoading("Loading On Demand...")
+        m.catalogTask.uri = m.serverUrl
+        m.catalogTask.control = "run"
+      end sub
+
+      sub loadLiveGuide()
+        m.sideMenu.visible = false
+        m.settingsView.visible = false
+        m.activeGuide = "liveTV"
+        m.errorReturnTarget = "settings"
+        uri = liveGuideUrl(m.serverUrl)
+        if uri = ""
+          showError("The Server URL must be configured before opening Live TV.")
+          return
+        end if
+        showLoading("Loading Live TV guide...")
+        m.liveGuideTask.control = "stop"
+        m.liveGuideTask.uri = uri
+        m.liveGuideTask.control = "run"
+      end sub
+
+      function liveGuideUrl(serverUrl as string) as string
+        value = serverUrl.trim()
+        if value = "" then return ""
+        queryAt = instr(1, value, "?")
+        if queryAt > 0 then value = value.left(queryAt - 1)
+        while value.len() > 0 and value.right(1) = "/"
+          value = value.left(value.len() - 1)
+        end while
+        if LCase(value.right(9)) = "/channels" then return value + "/guide"
+        return value + "/channels/guide"
+      end function
+
       sub onSettingChanged(event as object)
         changed = event.getData()
         if changed <> invalid and changed.key = "server_url"
           m.serverUrl = changed.value
+          m.tvGuide.content = invalid
+          m.liveTVGuide.content = invalid
         end if
       end sub
 
       function onKeyEvent(key as string, press as boolean) as boolean
         if not press then return false
+        if key = "back" and m.liveTVGuide.visible and not m.videoComponent.visible
+          if m.liveGuideBackDestination = "home" then return false
+          if m.liveGuideBackDestination = "menu"
+            onLiveGuideMenuRequested()
+          else
+            m.activeGuide = "onDemand"
+            showGuide("onDemand")
+            focusTvGuide()
+          end if
+          return true
+        end if
         if key = "back" and m.tvGuide.visible and not m.videoComponent.visible
           return false
         end if
