@@ -17,6 +17,7 @@
     <VideoComponent id="videoComponent" visible="false" />
     <SideMenu id="sideMenu" visible="false" />
     <SettingsView id="settingsView" visible="false" />
+    <CapabilityValidator id="capabilityValidator" />
     <ChannelCatalogTask id="catalogTask" />
     <LiveGuideTask id="liveGuideTask" />
     <PlaylistTask id="playlistTask" />
@@ -33,6 +34,7 @@
         m.videoComponent = m.top.findNode("videoComponent")
         m.sideMenu = m.top.findNode("sideMenu")
         m.settingsView = m.top.findNode("settingsView")
+        m.capabilityValidator = m.top.findNode("capabilityValidator")
         m.catalogTask = m.top.findNode("catalogTask")
         m.liveGuideTask = m.top.findNode("liveGuideTask")
         m.playlistTask = m.top.findNode("playlistTask")
@@ -57,6 +59,7 @@
         m.sideMenu.observeField("viewRequested", "onViewRequested")
         m.settingsView.observeField("closeRequested", "onSettingsViewClosed")
         m.settingsView.observeField("settingChanged", "onSettingChanged")
+        m.capabilityValidator.observeField("complete", "onCapabilitiesValidated")
         m.catalogTask.observeField("catalog", "onCatalogLoaded")
         m.catalogTask.observeField("errorMessage", "onCatalogError")
         m.liveGuideTask.observeField("guide", "onLiveGuideLoaded")
@@ -69,8 +72,6 @@
         appInfo = createObject("roAppInfo")
         m.serverUrl = resolveServerUrl(appInfo.getValue("channel_catalog_url"))
 
-        showLoading("Loading TV guide...")
-        m.catalogTask.uri = m.serverUrl
         m.defaultChannel = ""
         defaultChannelValue = appInfo.getValue("default_channel")
         if defaultChannelValue <> invalid then m.defaultChannel = defaultChannelValue.trim()
@@ -95,6 +96,17 @@
         end if
         if catalogTimeout <= 0 then catalogTimeout = 10
         m.catalogTask.timeoutSeconds = catalogTimeout
+        startupVideoUrl = appInfo.getValue("startup_video_url")
+        if startupVideoUrl <> invalid then m.capabilityValidator.startupVideoUrl = startupVideoUrl.trim()
+        startupVideoMode = appInfo.getValue("startup_video_mode")
+        if startupVideoMode <> invalid then m.capabilityValidator.startupVideoMode = startupVideoMode.trim()
+        m.capabilityValidator.validationRequested = true
+      end sub
+
+      sub onCapabilitiesValidated()
+        if not m.capabilityValidator.complete then return
+        showLoading("Loading TV guide...")
+        m.catalogTask.uri = m.serverUrl
         m.catalogTask.control = "run"
       end sub
 

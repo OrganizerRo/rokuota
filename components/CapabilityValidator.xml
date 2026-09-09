@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="CapabilityValidator" extends="Group">
+  <interface>
+    <field id="validationRequested" type="boolean" alwaysNotify="true" />
+    <field id="startupVideoUrl" type="string" />
+    <field id="startupVideoMode" type="string" value="firstRun" />
+    <field id="complete" type="boolean" value="false" alwaysNotify="true" />
+  </interface>
+
+  <children>
+    <Video
+      id="primaryVideo"
+      width="1920"
+      height="1080"
+      visible="false"
+      enableTrickPlay="false" />
+    <Video
+      id="standbyVideo"
+      width="1920"
+      height="1080"
+      visible="false"
+      enableTrickPlay="false" />
+    <Timer id="validationTimer" duration="10" repeat="false" />
+  </children>
+
+  <script type="text/brightscript" uri="pkg:/source/CapabilitySettings.brs" />
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.primaryVideo = m.top.findNode("primaryVideo")
+        m.standbyVideo = m.top.findNode("standbyVideo")
+        m.validationTimer = m.top.findNode("validationTimer")
+        m.validationPhase = ""
+        m.capabilityRecorded = false
+
+        m.top.observeField("validationRequested", "validateCapabilities")
+        m.primaryVideo.observeField("state", "onPrimaryVideoState")
+        m.standbyVideo.observeField("state", "onStandbyVideoState")
+        m.validationTimer.observeField("fire", "onValidationTimeout")
+      end sub
+
+      sub validateCapabilities()
+        if m.validationPhase <> "" then return
+        m.needsValidation = not hasDualVideoPrebufferSupportSetting()
+        mode = LCase(m.top.startupVideoMode.trim())
+        if mode <> "always" then mode = "firstrun"
+        m.showIntro = mode = "always" or m.needsValidation
+
+        if not m.showIntro and not m.needsValidation
+          finishValidation()
+          return
+        end if
+        if m.top.startupVideoUrl.trim() = ""
+          if m.needsValidation then recordCapability(false)
+          finishValidation()
+          return
+        end if
+
+        content = createObject("roSGNode", "ContentNode")
+        content.url = m.top.startupVideoUrl.trim()
+        content.streamFormat = streamFormatFromUrl(content.url)
+
+        m.validationPhase = "starting"
+        m.primaryVideo.loop = m.needsValidation
+        m.primaryVideo.visible = m.showIntro
+        m.primaryVideo.content = content
+        m.validationTimer.duration = 10
+        m.validationTimer.control = "start"
+        m.primaryVideo.control = "play"
+      end sub
+
+      sub onPrimaryVideoState(event as object)
+        if m.validationPhase = "" then return
+        state = event.getData()
+        if state = "error"
+          if m.needsValidation then recordCapability(false)
+          finishValidation()
+        else if state = "playing" and m.validationPhase = "starting"
+          m.validationTimer.control = "stop"
+          if m.needsValidation
+            m.validationPhase = "prebuffering"
+            m.standbyVideo.content = m.primaryVideo.content
+            m.validationTimer.duration = 5
+            m.validationTimer.control = "start"
+            m.standbyVideo.control = "prebuffer"
+          else
+            waitForIntro()
+          end if
+        else if state = "finished"
+          finishValidation()
+        end if
+      end sub
+
+      sub onStandbyVideoState(event as object)
+        if m.validationPhase <> "prebuffering" then return
+        if event.getData() = "error"
+          recordCapability(false)
+          stopStandbyVideo()
+          continueIntro()
+        end if
+      end sub
+
+      sub onValidationTimeout()
+        if m.validationPhase = "prebuffering"
+          recordCapability(true)
+          stopStandbyVideo()
+          continueIntro()
+        else if m.validationPhase = "starting"
+          if m.needsValidation then recordCapability(false)
+          finishValidation()
+        else
+          finishValidation()
+        end if
+      end sub
+
+      sub recordCapability(supported as boolean)
+        if m.capabilityRecorded then return
+        saveDualVideoPrebufferSupport(supported)
+        m.capabilityRecorded = true
+      end sub
+
+      sub waitForIntro()
+        m.validationPhase = "intro"
+        m.validationTimer.control = "stop"
+        m.validationTimer.duration = 60
+        m.validationTimer.control = "start"
+      end sub
+
+      sub continueIntro()
+        m.primaryVideo.loop = false
+        if m.primaryVideo.state = "finished"
+          finishValidation()
+        else
+          waitForIntro()
+        end if
+      end sub
+
+      function streamFormatFromUrl(url as string) as string
+        cleanUrl = url
+        queryAt = instr(1, cleanUrl, "?")
+        if queryAt > 0 then cleanUrl = cleanUrl.left(queryAt - 1)
+        fragmentAt = instr(1, cleanUrl, "#")
+        if fragmentAt > 0 then cleanUrl = cleanUrl.left(fragmentAt - 1)
+        for index = len(cleanUrl) to 1 step -1
+          character = cleanUrl.mid(index - 1, 1)
+          if character = "." then return LCase(cleanUrl.mid(index))
+          if character = "/" then exit for
+        end for
+        return "mp4"
+      end function
+
+      sub stopStandbyVideo()
+        m.standbyVideo.control = "stop"
+        m.standbyVideo.content = invalid
+      end sub
+
+      sub finishValidation()
+        m.validationTimer.control = "stop"
+        m.primaryVideo.control = "stop"
+        stopStandbyVideo()
+        m.primaryVideo.content = invalid
+        m.primaryVideo.loop = false
+        m.primaryVideo.visible = false
+        m.validationPhase = "complete"
+        m.top.complete = true
+      end sub
+    ]]>
+  </script>
+</component>

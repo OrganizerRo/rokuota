@@ -67,6 +67,7 @@
         m.channelIndex = 0
         m.programIndex = 0
         m.initialProgramSelected = false
+        m.followNow = false
         m.rowHeight = 190
         m.visibleRows = 3
         m.channelWidth = 533
@@ -75,6 +76,7 @@
         m.minimumProgramWidth = 433
         m.maximumProgramWidth = 1733
         m.maximumProgramDurationSeconds = 10800
+        m.maximumPreviousProgramSlots = 2
         m.defaultFocusColor = "#67B7FF"
         m.nowPlayingColor = "#FFD54A"
         m.rowNodes = []
@@ -403,6 +405,12 @@
         if m.programIndex >= m.focusRects[m.channelIndex].count()
           m.programIndex = m.focusRects[m.channelIndex].count() - 1
         end if
+        if m.focusRects[m.channelIndex].count() = 0 then return
+        minimumIndex = minimumBrowsableProgramIndex(m.channelIndex)
+        if m.programIndex < minimumIndex
+          m.programIndex = minimumIndex
+          updateBrowseTimeFromSelection()
+        end if
         if m.programIndex < 0 then m.programIndex = 0
         if m.focusRects[m.channelIndex].count() > 0
           focus = m.focusRects[m.channelIndex][m.programIndex]
@@ -455,6 +463,17 @@
 
       function programHasEnded(program as object, nowSeconds as integer) as boolean
         return program <> invalid and program.startTimeSeconds >= 0 and nowSeconds >= program.startTimeSeconds + program.durationSeconds
+      end function
+
+      function programStartsInFuture(program as object, nowSeconds as integer) as boolean
+        return program <> invalid and program.startTimeSeconds >= 0 and nowSeconds < program.startTimeSeconds
+      end function
+
+      function minimumBrowsableProgramIndex(channelIndex as integer) as integer
+        currentIndex = programIndexAtTime(channelIndex, localTimestampSeconds(), 0)
+        minimumIndex = currentIndex - m.maximumPreviousProgramSlots
+        if minimumIndex < 0 then return 0
+        return minimumIndex
       end function
 
       function formatDuration(seconds as integer) as string
@@ -520,7 +539,8 @@
           updateFocus()
           return true
         else if key = "left"
-          if m.programIndex > 0
+          minimumIndex = minimumBrowsableProgramIndex(m.channelIndex)
+          if m.programIndex > minimumIndex
             m.programIndex--
             updateBrowseTimeFromSelection()
             updateFocus()
@@ -533,7 +553,7 @@
           if channel <> invalid and m.programIndex < channel.getChildCount()
             program = channel.getChild(m.programIndex)
             nowSeconds = localTimestampSeconds()
-            if programHasEnded(program, nowSeconds)
+            if programHasEnded(program, nowSeconds) or programStartsInFuture(program, nowSeconds)
               m.followNow = true
               m.browseTimeSeconds = nowSeconds
               m.programIndex = programIndexAtTime(m.channelIndex, nowSeconds, m.programIndex)

@@ -9,6 +9,8 @@ Set `channel_catalog_url` in `manifest` to the server's `/channels/` endpoint:
 ```ini
 channel_catalog_url=http://192.168.0.103:8080/channels/
 channel_catalog_timeout_seconds=10
+startup_video_url=pkg:/tvstatic2p.mp4
+startup_video_mode=firstRun
 default_channel=
 default_channel_back_destination=home
 live_guide_back_destination=onDemand
@@ -45,6 +47,12 @@ TV guide. Default-channel playback uses the normal shuffled channel flow.
 Home; set it to `guide` to return to the TV guide instead. Other values use
 the safer default of `home`. Playback started manually from either guide
 always returns to its existing guide destination.
+
+`startup_video_url` selects the startup intro used for capability validation.
+Set `startup_video_mode=always` to show the intro on every launch, or
+`startup_video_mode=firstRun` to show it only until device capabilities have
+been written. An empty URL skips the intro and records dual-video prebuffering
+as unsupported if the capability has not been validated.
 
 `live_guide_back_destination` controls Back from the Live TV guide. Use
 `onDemand` (the default) to return to the On Demand guide, `menu` to open the
@@ -122,10 +130,12 @@ through `yt-dlp` only when their item is about to play.
 Video lookahead uses a second resolver task and one hidden standby `Video` node.
 Resolved video content is prebuffered with `control="prebuffer"` and promoted
 when the active item finishes; audio is resolved and cached without allocating a
-second audio player. Devices that reject a second video player are detected at
-runtime and remembered in the registry; resolver lookahead remains enabled, but
-subsequent items start through the current player without dual-player
-prebuffering. Other resolver or prebuffer validation failures display a
+second audio player. On first launch, the configured startup intro checks
+whether the device can play one video while prebuffering a hidden second copy.
+The result is remembered in the registry. Resolver lookahead remains enabled on
+unsupported devices, but subsequent items start through the current player
+without dual-player prebuffering. Runtime rejections also disable the capability.
+Other resolver or prebuffer validation failures display a
 playback-interruption warning and use the current resolver as the bounded
 fallback path. Device logs include `resolver_dur`, `playStartInfo.total_dur`,
 `manifest_dur`, and `prebuf_dur` for each item.

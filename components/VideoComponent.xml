@@ -203,6 +203,7 @@
     <AudioStatusTask id="audioStatusTask" />
   </children>
 
+  <script type="text/brightscript" uri="pkg:/source/CapabilitySettings.brs" />
   <script type="text/brightscript">
     <![CDATA[
       sub init()
@@ -303,6 +304,7 @@
 
       sub startPlayback()
         if m.top.playlist = invalid then return
+        m.dualVideoPrebufferSupported = readDualVideoPrebufferSupport()
         exitDestination = m.top.exitDestinationLabel
         if exitDestination = "" then exitDestination = "TV Guide"
         m.exitDialog.title = "Return to " + exitDestination + "?"
@@ -569,22 +571,6 @@
       function isDualVideoUnsupportedError(message as string) as boolean
         return instr(1, LCase(message), "only one playing instance supported") > 0
       end function
-
-      function readDualVideoPrebufferSupport() as boolean
-        section = createObject("roRegistrySection", "PlaybackCapabilities")
-        if section.exists("dual_video_prebuffer") then return section.read("dual_video_prebuffer") <> "false"
-        return true
-      end function
-
-      sub saveDualVideoPrebufferSupport(supported as boolean)
-        section = createObject("roRegistrySection", "PlaybackCapabilities")
-        if supported
-          section.write("dual_video_prebuffer", "true")
-        else
-          section.write("dual_video_prebuffer", "false")
-        end if
-        section.flush()
-      end sub
 
       sub showPrefetchWarning(message as string, action as string)
         if m.prefetchWarningActive then return
