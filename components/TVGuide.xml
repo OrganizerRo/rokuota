@@ -10,20 +10,10 @@
 
   <children>
     <Rectangle width="1920" height="1080" color="#0C131C" />
-    <Video
-      id="bgVideo"
-      width="1920"
-      height="1080"
-      visible="false"
-      loop="true"
-      mute="true"
-      enableTrickPlay="false" />
-    <Poster
-      id="bgImage"
-      width="1920"
-      height="1080"
-      loadDisplayMode="scaleToFill"
-      visible="false" />
+    <GuideBackground
+      id="background"
+      videoKey="ondemand_background_video"
+      imageKey="ondemand_background_image" />
     <Poster
       id="guideBackdrop"
       width="1920"
@@ -68,55 +58,18 @@
         m.guideBackdrop = m.top.findNode("guideBackdrop")
         m.guideBackdrop.opacity = manifestOpacity("guide_backdrop_opacity", 0.25)
         m.top.findNode("guideForeground").opacity = manifestOpacity("guide_foreground_opacity", 1.0)
-        m.bgVideo = m.top.findNode("bgVideo")
-        m.bgImage = m.top.findNode("bgImage")
+        m.background = m.top.findNode("background")
         m.top.observeField("content", "onContentChanged")
         m.top.observeField("focusRequested", "focusGuide")
         m.top.observeField("visible", "onVisibilityChanged")
         m.channelGrid.observeField("itemSelected", "onItemSelected")
         m.channelGrid.observeField("itemFocused", "onItemFocused")
         m.focusedIndex = 0
-        initBackground()
-      end sub
-
-      sub initBackground()
-        bgVideoUrl = manifestString("ondemand_background_video")
-        bgImageUrl = manifestString("ondemand_background_image")
-        bgOpacity = manifestOpacity("background_video_opacity", 0.25)
-        m.bgVideoActive = false
-        m.bgImageActive = false
-        if bgVideoUrl <> ""
-          m.bgVideo.opacity = bgOpacity
-          content = createObject("roSGNode", "ContentNode")
-          content.url = bgVideoUrl
-          content.streamFormat = bgStreamFormat(bgVideoUrl)
-          content.httpCertificatesFile = "common:/certs/ca-bundle.crt"
-          m.bgVideo.content = content
-          m.bgVideoActive = true
-          if m.top.visible
-            m.bgVideo.visible = true
-            m.bgVideo.control = "play"
-          end if
-        else if bgImageUrl <> ""
-          m.bgImage.opacity = bgOpacity
-          m.bgImage.uri = bgImageUrl
-          m.bgImageActive = true
-          if m.top.visible then m.bgImage.visible = true
-        end if
+        onVisibilityChanged()
       end sub
 
       sub onVisibilityChanged()
-        if m.bgVideoActive
-          if m.top.visible
-            m.bgVideo.visible = true
-            m.bgVideo.control = "play"
-          else
-            m.bgVideo.control = "stop"
-            m.bgVideo.visible = false
-          end if
-        else if m.bgImageActive
-          m.bgImage.visible = m.top.visible
-        end if
+        m.background.active = m.top.visible
       end sub
 
       sub onContentChanged()
@@ -157,20 +110,6 @@
         if value < 0 then return 0
         if value > 1 then return 1
         return value
-      end function
-
-      function manifestString(key as string) as string
-        appInfo = createObject("roAppInfo")
-        text = appInfo.getValue(key)
-        if text = invalid then return ""
-        return text.trim()
-      end function
-
-      function bgStreamFormat(url as string) as string
-        lowered = LCase(url)
-        if instr(1, lowered, ".m3u8") > 0 then return "hls"
-        if instr(1, lowered, ".mpd") > 0 then return "dash"
-        return "mp4"
       end function
 
       sub focusGuide()

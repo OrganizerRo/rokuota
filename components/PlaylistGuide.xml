@@ -11,6 +11,10 @@
 
   <children>
     <Rectangle width="1920" height="1080" color="#0C131C" />
+    <GuideBackground
+      id="background"
+      videoKey="ondemand_background_video"
+      imageKey="ondemand_background_image" />
     <Poster
       id="guideBackdrop"
       width="1920"
@@ -53,11 +57,18 @@
         m.guideBackdrop = m.top.findNode("guideBackdrop")
         m.guideBackdrop.opacity = manifestOpacity("guide_backdrop_opacity", 0.25)
         m.top.findNode("guideForeground").opacity = manifestOpacity("guide_foreground_opacity", 1.0)
+        m.background = m.top.findNode("background")
         m.top.observeField("content", "onContentChanged")
         m.top.observeField("channelTitle", "onChannelTitleChanged")
         m.top.observeField("focusRequested", "focusGuide")
+        m.top.observeField("visible", "onVisibilityChanged")
         m.itemGrid.observeField("itemSelected", "onItemSelected")
         m.itemGrid.observeField("itemFocused", "onItemFocused")
+        onVisibilityChanged()
+      end sub
+
+      sub onVisibilityChanged()
+        m.background.active = m.top.visible
       end sub
 
       sub onContentChanged()

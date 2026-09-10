@@ -5,7 +5,9 @@
     "source/**/*",
     "components/**/*",
     "images/**/*",
-    "tvstatic2p.mp4"
+    "tvstatic2p.mp4",
+    "OceanBlueGreen_roku.mp4",
+    "RedGeometricBackground.mp4"
   ],
   "outFile": "out/rokuota.zip"
 }

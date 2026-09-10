@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="GuideBackground" extends="Group">
+  <interface>
+    <field id="videoKey" type="string" />
+    <field id="imageKey" type="string" />
+    <field id="opacityKey" type="string" value="background_video_opacity" />
+    <field id="fallbackOpacity" type="float" value="0.25" />
+    <field id="active" type="boolean" value="false" alwaysNotify="true" />
+  </interface>
+
+  <children>
+    <Video
+      id="video"
+      width="1920"
+      height="1080"
+      visible="false"
+      loop="true"
+      mute="true"
+      enableTrickPlay="false" />
+    <Poster
+      id="image"
+      width="1920"
+      height="1080"
+      loadDisplayMode="scaleToFill"
+      visible="false" />
+  </children>
+
+  <script type="text/brightscript">
+    <![CDATA[
+      sub init()
+        m.video = m.top.findNode("video")
+        m.image = m.top.findNode("image")
+        m.videoConfigured = false
+        m.imageConfigured = false
+        m.top.visible = false
+        m.top.observeField("videoKey", "configure")
+        m.top.observeField("imageKey", "configure")
+        m.top.observeField("opacityKey", "configure")
+        m.top.observeField("fallbackOpacity", "configure")
+        m.top.observeField("active", "updatePlayback")
+        configure()
+      end sub
+
+      sub configure()
+        m.video.control = "stop"
+        m.video.visible = false
+        m.video.content = invalid
+        m.image.visible = false
+        m.image.uri = ""
+        m.videoConfigured = false
+        m.imageConfigured = false
+
+        opacity = manifestOpacity(m.top.opacityKey, m.top.fallbackOpacity)
+        videoUrl = manifestString(m.top.videoKey)
+        if videoUrl <> ""
+          content = createObject("roSGNode", "ContentNode")
+          content.url = videoUrl
+          content.streamFormat = streamFormat(videoUrl)
+          content.httpCertificatesFile = "common:/certs/ca-bundle.crt"
+          m.video.opacity = opacity
+          m.video.content = content
+          m.videoConfigured = true
+        else
+          imageUrl = manifestString(m.top.imageKey)
+          if imageUrl <> ""
+            m.image.opacity = opacity
+            m.image.uri = imageUrl
+            m.imageConfigured = true
+          end if
+        end if
+        updatePlayback()
+      end sub
+
+      sub updatePlayback()
+        shouldShow = m.top.active and (m.videoConfigured or m.imageConfigured)
+        m.top.visible = shouldShow
+        if m.videoConfigured
+          if shouldShow
+            m.video.visible = true
+            m.video.control = "play"
+          else
+            m.video.control = "stop"
+            m.video.visible = false
+          end if
+        else
+          m.image.visible = shouldShow and m.imageConfigured
+        end if
+      end sub
+
+      function manifestOpacity(key as string, fallback as float) as float
+        appInfo = createObject("roAppInfo")
+        text = appInfo.getValue(key)
+        if text = invalid or text = "" then return fallback
+        value = text.toFloat()
+        if value < 0 then return 0
+        if value > 1 then return 1
+        return value
+      end function
+
+      function manifestString(key as string) as string
+        if key = "" then return ""
+        appInfo = createObject("roAppInfo")
+        text = appInfo.getValue(key)
+        if text = invalid then return ""
+        return text.trim()
+      end function
+
+      function streamFormat(url as string) as string
+        lowered = LCase(url)
+        if instr(1, lowered, ".m3u8") > 0 then return "hls"
+        if instr(1, lowered, ".mpd") > 0 then return "dash"
+        return "mp4"
+      end function
+    ]]>
+  </script>
+</component>

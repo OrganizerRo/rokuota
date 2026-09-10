@@ -169,7 +169,9 @@ starts partway through a server cycle may cross into its next reshuffled cycle.
 ## Components
 
 - `TVGuide.xml` displays the channel rows and reports selection.
+- `LiveTVGuide.xml` displays the live channel schedule.
 - `PlaylistGuide.xml` displays all programs for a highlighted channel.
+- `GuideBackground.xml` owns each guide's background video/image and visibility lifecycle.
 - `ChannelCatalogTask.xml` retrieves and validates the channel API response.
 - `PlaylistTask.xml` loads the server playlist envelope and determines cycle length.
 - `MediaUrlTask.xml` requests the next server-selected and resolved media URL.

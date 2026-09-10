@@ -47,7 +47,7 @@
       visible="false" />
 
     <Group id="videoMetadataPanel" visible="false" translation="[60,380]">
-      <Rectangle width="1180" height="320" color="#E6101822" />
+      <Rectangle width="1180" height="320" color="#E61018A1" />
       <Poster
         id="videoThumbnail"
         translation="[25,25]"
@@ -215,6 +215,7 @@
     <Timer id="skipTimer" duration="2" repeat="false" />
     <Timer id="volumeRefreshTimer" duration="2" repeat="true" />
     <Timer id="metadataHideTimer" duration="5" repeat="false" />
+    <Timer id="teardownTimer" duration="0.25" repeat="false" />
     <MediaUrlTask id="currentItemResolver" />
     <MediaUrlTask id="nextItemResolver" />
     <AudioStatusTask id="audioStatusTask" />
@@ -257,6 +258,7 @@
         m.skipTimer = m.top.findNode("skipTimer")
         m.metadataHideTimer = m.top.findNode("metadataHideTimer")
         m.volumeRefreshTimer = m.top.findNode("volumeRefreshTimer")
+        m.teardownTimer = m.top.findNode("teardownTimer")
         m.currentItemResolver = m.top.findNode("currentItemResolver")
         m.nextItemResolver = m.top.findNode("nextItemResolver")
         m.audioStatusTask = m.top.findNode("audioStatusTask")
@@ -291,6 +293,7 @@
         m.itemStarted = false
         m.metricsLogged = false
         m.failurePending = false
+        m.pendingEndReason = ""
         m.audioVolume.text = "Volume: unavailable"
 
         m.top.observeField("playbackRequested", "startPlayback")
@@ -310,12 +313,15 @@
         m.skipTimer.observeField("fire", "playNext")
         m.metadataHideTimer.observeField("fire", "onMetadataHideTimer")
         m.volumeRefreshTimer.observeField("fire", "refreshAudioStatus")
+        m.teardownTimer.observeField("fire", "finishPlaybackEnd")
         m.exitDialog.observeField("buttonSelected", "onExitDialogButton")
         m.exitDialog.observeField("wasClosed", "onExitDialogClosed")
       end sub
 
       sub startPlayback()
         if m.top.playlist = invalid then return
+        m.teardownTimer.control = "stop"
+        m.pendingEndReason = ""
         m.dualVideoPrebufferSupported = readDualVideoPrebufferSupport()
         exitDestination = m.top.exitDestinationLabel
         if exitDestination = "" then exitDestination = "TV Guide"
@@ -621,7 +627,6 @@
         content.HDPosterUrl = thumbnail
 		content.live = false
         if length > 0 then content.length = length
-		content.start = startPosition
         content.httpCertificatesFile = "common:/certs/ca-bundle.crt"
         if startPosition > 0 then content.PlayStart = startPosition
         return {
@@ -1273,7 +1278,9 @@
       end sub
 
       sub endPlayback(reason as string)
+        if m.pendingEndReason <> "" then return
         m.active = false
+        m.pendingEndReason = reason
         m.resolvePending = false
         m.nextResolvePending = false
         m.prefetchedItem = invalid
@@ -1295,12 +1302,12 @@
         m.metadataHideTimer.control = "stop"
         m.volumeRefreshTimer.control = "stop"
         m.audioStatusTask.control = "stop"
+        m.videoA.visible = false
+        m.videoB.visible = false
         m.videoA.control = "stop"
         m.videoB.control = "stop"
         m.videoA.content = invalid
         m.videoB.content = invalid
-        m.videoA.visible = true
-        m.videoB.visible = false
         m.audio.control = "stop"
         hideAudioPanel()
         hideVideoMetadata()
@@ -1314,6 +1321,13 @@
           if m.prefetchWarningDialog <> invalid then m.prefetchWarningDialog.close = true
           m.prefetchWarningDialog = invalid
         end if
+        m.teardownTimer.control = "start"
+      end sub
+
+      sub finishPlaybackEnd()
+        if m.pendingEndReason = "" then return
+        reason = m.pendingEndReason
+        m.pendingEndReason = ""
         m.top.exitReason = reason
         m.top.playbackEnded = true
       end sub
