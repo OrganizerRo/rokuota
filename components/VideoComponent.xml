@@ -19,16 +19,32 @@
       id="videoPlayerA"
       width="1920"
       height="1080"
-      enableTrickPlay="true"
-      notificationInterval="0.5" />
+      enableTrickPlay="false"
+      notificationInterval="0.5"
+	  />
     <Video
       id="videoPlayerB"
       width="1920"
       height="1080"
       visible="false"
-      enableTrickPlay="true"
+      enableTrickPlay="false"
       notificationInterval="0.5" />
     <Audio id="audioPlayer" notificationInterval="0.5" />
+
+    <Rectangle
+      id="topVignette"
+      translation="[0,0]"
+      width="1920"
+      height="180"
+      color="#CC000000"
+      visible="false" />
+    <Rectangle
+      id="bottomVignette"
+      translation="[0,900]"
+      width="1920"
+      height="180"
+      color="#CC000000"
+      visible="false" />
 
     <Group id="videoMetadataPanel" visible="false" translation="[60,380]">
       <Rectangle width="1180" height="320" color="#E6101822" />
@@ -198,6 +214,7 @@
     <Timer id="prefetchWaitWatchdog" duration="15" repeat="false" />
     <Timer id="skipTimer" duration="2" repeat="false" />
     <Timer id="volumeRefreshTimer" duration="2" repeat="true" />
+    <Timer id="metadataHideTimer" duration="5" repeat="false" />
     <MediaUrlTask id="currentItemResolver" />
     <MediaUrlTask id="nextItemResolver" />
     <AudioStatusTask id="audioStatusTask" />
@@ -212,11 +229,6 @@
         m.video = m.videoA
         m.currentVideoSlot = "A"
         m.audio = m.top.findNode("audioPlayer")
-        m.videoATrickPlayBar = m.videoA.trickPlayBar
-        m.videoBTrickPlayBar = m.videoB.trickPlayBar
-        m.videoTrickPlayBar = m.videoATrickPlayBar
-        positionTrickPlayBar(m.videoATrickPlayBar)
-        positionTrickPlayBar(m.videoBTrickPlayBar)
         m.videoMetadataPanel = m.top.findNode("videoMetadataPanel")
         m.videoThumbnail = m.top.findNode("videoThumbnail")
         m.videoTitle = m.top.findNode("videoTitle")
@@ -225,6 +237,8 @@
         m.videoProgress = m.top.findNode("videoProgress")
         m.videoTime = m.top.findNode("videoTime")
         m.videoMetadataShowAnimation = m.top.findNode("videoMetadataShowAnimation")
+        m.topVignette = m.top.findNode("topVignette")
+        m.bottomVignette = m.top.findNode("bottomVignette")
         m.audioPanel = m.top.findNode("audioPanel")
         m.audioBackdrop = m.top.findNode("audioBackdrop")
         m.audioBackdrop.opacity = manifestOpacity("audio_backdrop_opacity", 0.25)
@@ -241,6 +255,7 @@
         m.loadWatchdog = m.top.findNode("loadWatchdog")
         m.prefetchWaitWatchdog = m.top.findNode("prefetchWaitWatchdog")
         m.skipTimer = m.top.findNode("skipTimer")
+        m.metadataHideTimer = m.top.findNode("metadataHideTimer")
         m.volumeRefreshTimer = m.top.findNode("volumeRefreshTimer")
         m.currentItemResolver = m.top.findNode("currentItemResolver")
         m.nextItemResolver = m.top.findNode("nextItemResolver")
@@ -252,6 +267,12 @@
         m.exitDialogActive = false
         m.active = false
         m.activePlayer = ""
+        m.videoMetadataVisible = false
+        m.seekShortSeconds = manifestInteger("seek_short_seconds", 10)
+        m.seekLongSeconds = manifestInteger("seek_long_seconds", 30)
+        m.seekDoubleTapMs = manifestInteger("seek_double_tap_ms", 400)
+        m.lastSeekDirection = ""
+        m.seekStopwatch = createObject("roTimespan")
         m.resolvePending = false
         m.nextResolvePending = false
         m.prefetchedItem = invalid
@@ -277,8 +298,6 @@
         m.videoA.observeField("position", "onVideoPositionChanged")
         m.videoB.observeField("state", "onVideoBState")
         m.videoB.observeField("position", "onVideoPositionChanged")
-        m.videoATrickPlayBar.observeField("visible", "onVideoATrickPlayBarVisibilityChanged")
-        m.videoBTrickPlayBar.observeField("visible", "onVideoBTrickPlayBarVisibilityChanged")
         m.audio.observeField("state", "onAudioState")
         m.audio.observeField("position", "onAudioPositionChanged")
         m.currentItemResolver.observeField("mediaUrl", "onCurrentMediaUrlResolved")
@@ -289,17 +308,10 @@
         m.loadWatchdog.observeField("fire", "onLoadTimeout")
         m.prefetchWaitWatchdog.observeField("fire", "onPrefetchWaitTimeout")
         m.skipTimer.observeField("fire", "playNext")
+        m.metadataHideTimer.observeField("fire", "onMetadataHideTimer")
         m.volumeRefreshTimer.observeField("fire", "refreshAudioStatus")
         m.exitDialog.observeField("buttonSelected", "onExitDialogButton")
         m.exitDialog.observeField("wasClosed", "onExitDialogClosed")
-      end sub
-
-      sub positionTrickPlayBar(bar as object)
-        if bar = invalid then return
-        barPosition = bar.translation
-        if barPosition <> invalid and barPosition.count() >= 2
-          bar.translation = [barPosition[0], barPosition[1] - 120]
-        end if
       end sub
 
       sub startPlayback()
@@ -345,7 +357,6 @@
         m.videoB.visible = false
         m.video = m.videoA
         m.currentVideoSlot = "A"
-        m.videoTrickPlayBar = m.video.trickPlayBar
       end sub
 
       sub playCurrent()
@@ -608,6 +619,9 @@
         content.streamFormat = streamFormat
         content.description = description
         content.HDPosterUrl = thumbnail
+		content.live = false
+        if length > 0 then content.length = length
+		content.start = startPosition
         content.httpCertificatesFile = "common:/certs/ca-bundle.crt"
         if startPosition > 0 then content.PlayStart = startPosition
         return {
@@ -875,11 +889,9 @@
         if m.currentVideoSlot = "A"
           m.currentVideoSlot = "B"
           m.video = m.videoB
-          m.videoTrickPlayBar = m.videoBTrickPlayBar
         else
           m.currentVideoSlot = "A"
           m.video = m.videoA
-          m.videoTrickPlayBar = m.videoATrickPlayBar
         end if
 
         m.itemStarted = false
@@ -955,6 +967,43 @@
           end if
           return true
         end if
+        if m.active and m.activePlayer = "video" and key = "OK"
+          if m.videoMetadataVisible
+            hideVideoMetadata()
+          else
+            showVideoMetadata()
+          end if
+          return true
+        end if
+        if m.active and m.activePlayer = "video" and key = "play"
+          if m.video.state = "paused"
+            m.video.control = "resume"
+          else if m.video.state = "playing"
+            m.video.control = "pause"
+          end if
+          if not m.videoMetadataVisible then showVideoMetadata()
+          return true
+        end if
+        if m.active and m.activePlayer = "video" and (key = "rewind" or key = "left")
+          seekVideo(-videoSeekAmount("left"))
+          if not m.videoMetadataVisible
+            showVideoMetadata()
+          else
+            m.metadataHideTimer.control = "stop"
+            m.metadataHideTimer.control = "start"
+          end if
+          return true
+        end if
+        if m.active and m.activePlayer = "video" and (key = "fastforward" or key = "right")
+          seekVideo(videoSeekAmount("right"))
+          if not m.videoMetadataVisible
+            showVideoMetadata()
+          else
+            m.metadataHideTimer.control = "stop"
+            m.metadataHideTimer.control = "start"
+          end if
+          return true
+        end if
         if m.active and m.activePlayer = "audio" and key = "play"
           if m.audio.state = "paused"
             m.audio.autoplayAfterSeek = true
@@ -990,6 +1039,31 @@
         m.audio.autoplayAfterSeek = (m.audio.state = "playing")
         m.audio.seek = targetPosition
         updateAudioProgressAt(targetPosition, duration)
+        return true
+      end function
+
+      function videoSeekAmount(direction as string) as integer
+        elapsed = m.seekStopwatch.totalMilliseconds()
+        if direction = m.lastSeekDirection and elapsed <= m.seekDoubleTapMs
+          amount = m.seekLongSeconds
+        else
+          amount = m.seekShortSeconds
+        end if
+        m.lastSeekDirection = direction
+        m.seekStopwatch.mark()
+        return amount
+      end function
+
+      function seekVideo(offset as integer) as boolean
+        position = m.video.position
+        duration = m.video.duration
+        if position = invalid or duration = invalid or duration <= 0 then return false
+
+        targetPosition = position + offset
+        if targetPosition < 0 then targetPosition = 0
+        if targetPosition > duration then targetPosition = duration
+        m.video.seek = targetPosition
+        updateVideoProgressAt(targetPosition, duration)
         return true
       end function
 
@@ -1058,6 +1132,11 @@
         m.videoMetadataPanel.translation = [60, 380]
         m.videoMetadataPanel.visible = true
         m.videoMetadataShowAnimation.control = "start"
+        m.topVignette.visible = true
+        m.bottomVignette.visible = true
+        m.videoMetadataVisible = true
+        m.metadataHideTimer.control = "stop"
+        m.metadataHideTimer.control = "start"
       end sub
 
       sub onVideoPositionChanged()
@@ -1086,30 +1165,40 @@
         m.videoTime.text = formatTime(position) + " / " + formatTime(duration)
       end sub
 
-      sub onVideoATrickPlayBarVisibilityChanged(event as object)
-        onVideoTrickPlayBarVisibilityChanged("A", event.getData())
-      end sub
-
-      sub onVideoBTrickPlayBarVisibilityChanged(event as object)
-        onVideoTrickPlayBarVisibilityChanged("B", event.getData())
-      end sub
-
-      sub onVideoTrickPlayBarVisibilityChanged(slot as string, visible as boolean)
-        if slot <> m.currentVideoSlot then return
-        if m.active and m.activePlayer = "video" and visible
-          showVideoMetadata()
-        else
-          hideVideoMetadata()
+      sub updateVideoProgressAt(position as dynamic, duration as dynamic)
+        if position = invalid or position < 0 then position = 0
+        if duration = invalid or duration <= 0
+          duration = m.activeContentLength
+          if duration < 0 then duration = 0
         end if
+
+        progressWidth = 0
+        if duration > 0
+          progressWidth = int(1130 * position / duration)
+          if progressWidth < 0 then progressWidth = 0
+          if progressWidth > 1130 then progressWidth = 1130
+        end if
+        m.videoProgress.width = progressWidth
+        m.videoTime.text = formatTime(position) + " / " + formatTime(duration)
       end sub
 
       sub hideVideoMetadata()
+        m.metadataHideTimer.control = "stop"
         m.videoMetadataShowAnimation.control = "stop"
         m.videoMetadataPanel.visible = false
         m.videoMetadataPanel.translation = [60, 380]
         m.videoThumbnail.uri = ""
         m.videoProgress.width = 0
         m.videoTime.text = "0:00 / 0:00"
+        m.topVignette.visible = false
+        m.bottomVignette.visible = false
+        m.videoMetadataVisible = false
+      end sub
+
+      sub onMetadataHideTimer()
+        if m.active and m.activePlayer = "video" and m.videoMetadataVisible
+          hideVideoMetadata()
+        end if
       end sub
 
       function metadataLengthText(length as integer) as string
@@ -1124,6 +1213,15 @@
         m.audioProgress.width = 0
         m.audioTime.text = "0:00 / 0:00"
       end sub
+
+      function manifestInteger(key as string, fallback as integer) as integer
+        appInfo = createObject("roAppInfo")
+        text = appInfo.getValue(key)
+        if text = invalid or text = "" then return fallback
+        value = int(val(text))
+        if value <= 0 then return fallback
+        return value
+      end function
 
       function manifestOpacity(key as string, fallback as float) as float
         appInfo = createObject("roAppInfo")
@@ -1187,11 +1285,14 @@
         m.itemStarted = false
         m.failurePending = false
         m.activePlayer = ""
+        m.videoMetadataVisible = false
+        m.lastSeekDirection = ""
         m.currentItemResolver.control = "stop"
         m.nextItemResolver.control = "stop"
         m.loadWatchdog.control = "stop"
         m.prefetchWaitWatchdog.control = "stop"
         m.skipTimer.control = "stop"
+        m.metadataHideTimer.control = "stop"
         m.volumeRefreshTimer.control = "stop"
         m.audioStatusTask.control = "stop"
         m.videoA.control = "stop"

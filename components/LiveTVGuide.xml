@@ -9,6 +9,20 @@
 
   <children>
     <Rectangle width="1920" height="1080" color="#0C131C" />
+    <Video
+      id="bgVideo"
+      width="1920"
+      height="1080"
+      visible="false"
+      loop="true"
+      mute="true"
+      enableTrickPlay="false" />
+    <Poster
+      id="bgImage"
+      width="1920"
+      height="1080"
+      loadDisplayMode="scaleToFill"
+      visible="false" />
     <Timer id="nowPlayingTimer" duration="30" repeat="true" />
     <Group id="viewport" translation="[0,360]">
       <Group id="rows" />
@@ -61,8 +75,11 @@
         m.detailTitle = m.top.findNode("detailTitle")
         m.detailTime = m.top.findNode("detailTime")
         m.detailDescription = m.top.findNode("detailDescription")
+        m.bgVideo = m.top.findNode("bgVideo")
+        m.bgImage = m.top.findNode("bgImage")
         m.top.observeField("content", "onContentChanged")
         m.top.observeField("focusRequested", "focusGuide")
+        m.top.observeField("visible", "onVisibilityChanged")
         m.nowPlayingTimer.observeField("fire", "onNowPlayingTimer")
         m.channelIndex = 0
         m.programIndex = 0
@@ -86,7 +103,72 @@
         m.nowPlayingAccents = []
         m.programTimeLabels = []
         m.nowPlayingTimer.control = "start"
+        initBackground()
       end sub
+
+      sub initBackground()
+        bgVideoUrl = manifestString("live_guide_background_video")
+        bgImageUrl = manifestString("live_guide_background_image")
+        bgOpacity = manifestOpacity("background_video_opacity", 0.25)
+        m.bgVideoActive = false
+        m.bgImageActive = false
+        if bgVideoUrl <> ""
+          m.bgVideo.opacity = bgOpacity
+          content = createObject("roSGNode", "ContentNode")
+          content.url = bgVideoUrl
+          content.streamFormat = bgStreamFormat(bgVideoUrl)
+          content.httpCertificatesFile = "common:/certs/ca-bundle.crt"
+          m.bgVideo.content = content
+          m.bgVideoActive = true
+          if m.top.visible
+            m.bgVideo.visible = true
+            m.bgVideo.control = "play"
+          end if
+        else if bgImageUrl <> ""
+          m.bgImage.opacity = bgOpacity
+          m.bgImage.uri = bgImageUrl
+          m.bgImageActive = true
+          if m.top.visible then m.bgImage.visible = true
+        end if
+      end sub
+
+      sub onVisibilityChanged()
+        if m.bgVideoActive
+          if m.top.visible
+            m.bgVideo.visible = true
+            m.bgVideo.control = "play"
+          else
+            m.bgVideo.control = "stop"
+            m.bgVideo.visible = false
+          end if
+        else if m.bgImageActive
+          m.bgImage.visible = m.top.visible
+        end if
+      end sub
+
+      function manifestOpacity(key as string, fallback as float) as float
+        appInfo = createObject("roAppInfo")
+        text = appInfo.getValue(key)
+        if text = invalid or text = "" then return fallback
+        value = text.toFloat()
+        if value < 0 then return 0
+        if value > 1 then return 1
+        return value
+      end function
+
+      function manifestString(key as string) as string
+        appInfo = createObject("roAppInfo")
+        text = appInfo.getValue(key)
+        if text = invalid then return ""
+        return text.trim()
+      end function
+
+      function bgStreamFormat(url as string) as string
+        lowered = LCase(url)
+        if instr(1, lowered, ".m3u8") > 0 then return "hls"
+        if instr(1, lowered, ".mpd") > 0 then return "dash"
+        return "mp4"
+      end function
 
       sub onContentChanged()
         buildRows()
@@ -160,25 +242,29 @@
         poster.height = 170
         poster.loadDisplayMode = "scaleToFit"
         poster.uri = channel.HDPosterUrl
+        poster.opacity = 0.35
 
         overlay = card.createChild("Rectangle")
-        overlay.translation = [0, 80]
         overlay.width = cardWidth
-        overlay.height = 90
-        overlay.color = "#CC000000"
+        overlay.height = 170
+        overlay.color = "#B3182331"
 
         title = card.createChild("Label")
-        title.translation = [18, 88]
+        title.translation = [18, 30]
         title.width = cardWidth - 36
-        title.height = 36
+        title.height = 60
+        title.wrap = true
+        title.maxLines = 2
         title.font = "font:MediumBoldSystemFont"
         title.color = "#FFFFFF"
         title.text = channel.title
 
         description = card.createChild("Label")
-        description.translation = [18, 127]
+        description.translation = [18, 100]
         description.width = cardWidth - 36
-        description.height = 30
+        description.height = 50
+        description.wrap = true
+        description.maxLines = 2
         description.font = "font:SmallSystemFont"
         description.color = "#D7E0EA"
         description.text = channel.description
