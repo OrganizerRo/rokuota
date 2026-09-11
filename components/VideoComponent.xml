@@ -35,19 +35,28 @@
       id="topVignette"
       translation="[0,0]"
       width="1920"
-      height="180"
-      color="#CC000000"
+      height="380"
+      color="#CCCCCC00"
       visible="false" />
     <Rectangle
       id="bottomVignette"
       translation="[0,900]"
       width="1920"
-      height="180"
-      color="#CC000000"
+      height="380"
+      color="#CCCCCC00"
       visible="false" />
 
-    <Group id="videoMetadataPanel" visible="false" translation="[60,380]">
-      <Rectangle width="1180" height="320" color="#E61018A1" />
+    <Group id="videoMetadataPanel" visible="false" translation="[60,-200]">
+     <Rectangle width="1180" height="320" color="#10106FA1" />
+		<!-- <Poster -->
+		<!-- id="videoMetadataBG" -->
+		<!-- width="1180" -->
+		<!-- height="320" -->
+		<!-- uri="pkg:/images/rounded_panel.png" -->
+		<!-- blendColor="#E61018A1" -->
+		<!-- translation="[0,0]" -->
+		<!-- /> -->
+
       <Poster
         id="videoThumbnail"
         translation="[25,25]"
@@ -98,14 +107,14 @@
     </Group>
 
     <Animation
-      id="videoMetadataShowAnimation"
-      duration="0.3"
-      easeFunction="outQuad">
-      <Vector2DFieldInterpolator
+    id="videoMetadataShowAnimation"
+    duration="0.3"
+    easeFunction="outQuad">
+    <Vector2DFieldInterpolator
         key="[0.0,1.0]"
-        keyValue="[[60.0,380.0],[60.0,60.0]]"
+        keyValue="[[60.0,-200.0],[60.0,60.0]]"
         fieldToInterp="videoMetadataPanel.translation" />
-    </Animation>
+</Animation>
 
     <Group id="audioPanel" visible="false">
       <Rectangle width="1920" height="1080" color="#0C131C" />

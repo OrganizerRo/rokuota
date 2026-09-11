@@ -17,7 +17,7 @@
     <Group id="viewport" translation="[0,360]">
       <Group id="rows" />
     </Group>
-    <Rectangle width="1920" height="350" color="#0C131C" />
+    <Rectangle width="1920" height="360" color="#0C131C" />
     <Poster
       id="detailPoster"
       translation="[80,35]"
@@ -48,7 +48,7 @@
       font="font:MediumSystemFont"
       color="#D7E0EA" />
     <Label
-      translation="[550,285]"
+      translation="[550,310]"
       width="1290"
       height="30"
       text="Up/Down: channels    Left/Right: schedule    OK: watch live"
@@ -74,7 +74,7 @@
         m.programIndex = 0
         m.initialProgramSelected = false
         m.followNow = false
-        m.rowHeight = 190
+        m.rowHeight = 170
         m.visibleRows = 3
         m.channelWidth = 533
         m.programGutter = 20
@@ -83,7 +83,7 @@
         m.maximumProgramWidth = 1733
         m.maximumProgramDurationSeconds = 10800
         m.maximumPreviousProgramSlots = 2
-        m.defaultFocusColor = "#67B7FF"
+        m.defaultFocusColor = "#00FF00"
         m.nowPlayingColor = "#FFD54A"
         m.rowNodes = []
         m.programGroups = []
@@ -142,7 +142,7 @@
             channelFocus.push(tileResult.focus)
             channelAccents.push(tileResult.nowPlayingAccent)
             channelTimeLabels.push(tileResult.time)
-            x += width + 10
+            x += width + 0
           end for
           appendChannelCard(row, channel)
 
@@ -254,7 +254,7 @@
 
         nowPlayingAccent = tile.createChild("Group")
         nowPlayingAccent.opacity = 0.0
-        appendBorder(nowPlayingAccent, width, 3, m.nowPlayingColor)
+        'appendBorder(nowPlayingAccent, width, 3, m.nowPlayingColor)
 
         focus = tile.createChild("Group")
         focus.opacity = 0.0
@@ -341,21 +341,30 @@
       end sub
 
       function programIndexAtTime(channelIndex as integer, targetSeconds as integer, fallback as integer) as integer
-        if m.top.content = invalid or channelIndex < 0 or channelIndex >= m.top.content.getChildCount() then return fallback
-        channel = m.top.content.getChild(channelIndex)
-        if channel = invalid or channel.getChildCount() = 0 then return fallback
+		  if m.top.content = invalid or channelIndex < 0 or channelIndex >= m.top.content.getChildCount() then return fallback
+		  channel = m.top.content.getChild(channelIndex)
+		  if channel = invalid or channel.getChildCount() = 0 then return fallback
 
-        closestIndex = 0
-        for programIndex = 0 to channel.getChildCount() - 1
-          program = channel.getChild(programIndex)
-          if program.startTimeSeconds >= 0
-            if targetSeconds < program.startTimeSeconds then return closestIndex
-            closestIndex = programIndex
-            if targetSeconds < program.startTimeSeconds + program.durationSeconds then return programIndex
-          end if
-        end for
-        return closestIndex
-      end function
+		  closestIndex = 0
+		  for programIndex = 0 to channel.getChildCount() - 1
+			program = channel.getChild(programIndex)
+			if program.startTimeSeconds >= 0
+			  if targetSeconds < program.startTimeSeconds then return closestIndex
+			  closestIndex = programIndex
+			  if targetSeconds < program.startTimeSeconds + program.durationSeconds then return programIndex
+			end if
+		  end for
+
+		  ' Check if target time is completely past the final program's runtime
+		  lastProgram = channel.getChild(channel.getChildCount() - 1)
+		  if lastProgram <> invalid and lastProgram.startTimeSeconds >= 0
+			if targetSeconds >= lastProgram.startTimeSeconds + lastProgram.durationSeconds
+			  return -1
+			end if
+		  end if
+
+		  return closestIndex
+	  end function
 
       sub updateBrowseTimeFromSelection()
         tile = m.programTiles[m.channelIndex][m.programIndex]
@@ -510,24 +519,31 @@
         m.rows.translation = [0, -(firstVisible * m.rowHeight)]
       end sub
 
-      sub updateHorizontalScroll()
-        if m.programGroups.count() = 0 or m.programTiles[m.channelIndex].count() = 0 then return
-        for channelIndex = 0 to m.programGroups.count() - 1
-          if m.programTiles[channelIndex].count() > 0
-            alignedIndex = programIndexAtTime(channelIndex, m.browseTimeSeconds, 0)
-            tile = m.programTiles[channelIndex][alignedIndex]
-            targetX = tile.translation[0]
-            if not m.followNow
-              program = m.top.content.getChild(channelIndex).getChild(alignedIndex)
-              elapsedSeconds = m.browseTimeSeconds - program.startTimeSeconds
-              if elapsedSeconds > 0 and program.durationSeconds > 0
-                targetX += int(elapsedSeconds * tile.guideWidth / program.durationSeconds)
-              end if
-            end if
-            m.programGroups[channelIndex].translation = [m.channelWidth + m.programGutter - targetX, 0]
-          end if
-        end for
-      end sub
+		sub updateHorizontalScroll()
+		  if m.programGroups.count() = 0 or m.programTiles[m.channelIndex].count() = 0 then return
+		  for channelIndex = 0 to m.programGroups.count() - 1
+			if m.programTiles[channelIndex].count() > 0
+			  alignedIndex = programIndexAtTime(channelIndex, m.browseTimeSeconds, -1)
+			  
+			  if alignedIndex < 0
+				' Nothing playing currently: reset horizontal row translation to origin
+				targetX = 0
+			  else
+				tile = m.programTiles[channelIndex][alignedIndex]
+				targetX = tile.translation[0]
+				if not m.followNow
+				  program = m.top.content.getChild(channelIndex).getChild(alignedIndex)
+				  elapsedSeconds = m.browseTimeSeconds - program.startTimeSeconds
+				  if elapsedSeconds > 0 and program.durationSeconds > 0
+					targetX += int(elapsedSeconds * tile.guideWidth / program.durationSeconds)
+				  end if
+				end if
+			  end if
+
+			  m.programGroups[channelIndex].translation = [m.channelWidth + m.programGutter - targetX, 0]
+			end if
+		  end for
+		end sub
 
       function onKeyEvent(key as string, press as boolean) as boolean
         if not press then return false

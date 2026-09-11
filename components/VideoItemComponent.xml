@@ -11,7 +11,7 @@
       layoutDirection="horiz"
       itemSpacings="[20]"
       vertAlignment="left"
-      translation="[20,60]">
+      translation="[20,25]">
 
       <Poster
         id="thumbnail"
@@ -22,16 +22,18 @@
         loadDisplayMode="scaleToFit"
         uri="" />
 
+    </LayoutGroup>
       <LayoutGroup
         layoutDirection="vert"
-        itemSpacings="[4]">
+        itemSpacings="[4]"
+		translation="[180,25]">
 
         <Label
           id="titleLabel"
           width="1180"
           height="48"
           font="font:MediumBoldSystemFont"
-          color="#EEEEEE"
+          color="#EEEEEE"		  
           text="" />
 
         <Label
@@ -41,8 +43,8 @@
           font="font:SmallSystemFont"
           color="#AAAAAA"
           text="" />
+
       </LayoutGroup>
-    </LayoutGroup>
 
     <Label
       id="durationLabel"
