@@ -4,6 +4,11 @@
     <field id="closeRequested" type="boolean" value="false" />
   </interface>
   <children>
+    <Rectangle width="1920" height="1080" color="#0C131C" />
+    <GuideBackground
+      id="guideBackground"
+      videoKey="ondemand_background_video"
+      imageKey="ondemand_background_image" />
     <TVGuide id="tvGuide" />
     <LiveTVGuide id="liveTVGuide" visible="false" />
     <PlaylistGuide id="playlistGuide" visible="false" />
@@ -27,6 +32,7 @@
   <script type="text/brightscript">
     <![CDATA[
       sub init()
+        m.guideBackground = m.top.findNode("guideBackground")
         m.tvGuide = m.top.findNode("tvGuide")
         m.liveTVGuide = m.top.findNode("liveTVGuide")
         m.errorStaticVideo = m.top.findNode("errorStaticVideo")
@@ -267,10 +273,9 @@
         end if
         if m.loadingBrowseMode
           m.channelPlaylist = playlist
-          m.tvGuide.visible = false
           m.playlistGuide.channelTitle = m.selectedChannel.title
           m.playlistGuide.content = playlist
-          m.playlistGuide.visible = true
+          showPlaylistGuide()
           focusPlaylistGuide()
           return
         end if
@@ -300,6 +305,7 @@
 
       sub startPlayback(playlist as object, startIndex as integer, singleItem as boolean, returnTarget as string)
         m.playbackReturnTarget = returnTarget
+        m.guideBackground.active = false
         m.tvGuide.visible = false
         m.liveTVGuide.visible = false
         m.playlistGuide.visible = false
@@ -361,7 +367,7 @@
           showGuide("liveTV")
           focusLiveGuide()
         else if m.playbackReturnTarget = "playlistGuide" and m.channelPlaylist <> invalid
-          m.playlistGuide.visible = true
+          showPlaylistGuide()
           focusPlaylistGuide()
         else
           showGuide("onDemand")
@@ -370,8 +376,7 @@
       end sub
 
       sub onPlaylistGuideClosed()
-        m.playlistGuide.visible = false
-        m.tvGuide.visible = true
+        showGuide("onDemand")
         focusTvGuide()
       end sub
 
@@ -404,6 +409,7 @@
         staticContent.title = "TV static"
         staticContent.streamFormat = "mp4"
 
+        m.guideBackground.active = false
         m.tvGuide.visible = false
         m.liveTVGuide.visible = false
         m.playlistGuide.visible = false
@@ -457,10 +463,35 @@
       end sub
 
       sub showGuide(guideName as string)
+        showGuideBackground(guideName)
         m.tvGuide.visible = (guideName = "onDemand")
         m.liveTVGuide.visible = (guideName = "liveTV")
         m.playlistGuide.visible = false
         m.settingsView.visible = false
+      end sub
+
+      sub showPlaylistGuide()
+        showGuideBackground("onDemand")
+        m.tvGuide.visible = false
+        m.liveTVGuide.visible = false
+        m.playlistGuide.visible = true
+        m.settingsView.visible = false
+      end sub
+
+      sub showGuideBackground(guideName as string)
+        videoKey = "ondemand_background_video"
+        imageKey = "ondemand_background_image"
+        if guideName = "liveTV"
+          videoKey = "live_guide_background_video"
+          imageKey = "live_guide_background_image"
+        end if
+
+        if m.guideBackground.videoKey <> videoKey or m.guideBackground.imageKey <> imageKey
+          m.guideBackground.active = false
+          m.guideBackground.videoKey = videoKey
+          m.guideBackground.imageKey = imageKey
+        end if
+        m.guideBackground.active = true
       end sub
 
       function resolveServerUrl(manifestUrl as string) as string

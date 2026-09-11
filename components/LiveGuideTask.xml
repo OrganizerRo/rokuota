@@ -32,9 +32,12 @@
           return
         end if
 
+        localUtcOffsetSeconds = currentLocalUtcOffsetSeconds()
         guide = createObject("roSGNode", "ContentNode")
         for each channel in channels
-          if type(channel) = "roAssociativeArray" then appendChannel(guide, channel)
+          if type(channel) = "roAssociativeArray"
+            appendChannel(guide, channel, localUtcOffsetSeconds)
+          end if
         end for
 
         if guide.getChildCount() = 0
@@ -77,7 +80,7 @@
         return { body: body, error: "" }
       end function
 
-      sub appendChannel(parent as object, channel as object)
+      sub appendChannel(parent as object, channel as object, localUtcOffsetSeconds as integer)
         title = jsonString(channel, "title")
         if title = "" or not channel.doesExist("entries") or type(channel.entries) <> "roArray" then return
         if channel.entries.count() = 0 then return
@@ -90,24 +93,28 @@
 
         for index = 0 to channel.entries.count() - 1
           entry = channel.entries[index]
-          if type(entry) = "roAssociativeArray" then appendProgram(item, channel.entries, index, entry)
+          if type(entry) = "roAssociativeArray"
+            appendProgram(item, channel.entries, index, entry, localUtcOffsetSeconds)
+          end if
         end for
         if item.getChildCount() > 0 then parent.appendChild(item)
       end sub
 
-      sub appendProgram(parent as object, entries as object, index as integer, entry as object)
+      sub appendProgram(parent as object, entries as object, index as integer, entry as object, localUtcOffsetSeconds as integer)
         title = jsonString(entry, "title")
         if title = "" then title = "Program " + (index + 1).toStr()
         startTime = jsonString(entry, "starttime")
-        durationSeconds = programDuration(entries, index)
+        durationSeconds = programDuration(entries, index, localUtcOffsetSeconds)
 
         program = createObject("roSGNode", "ContentNode")
         program.addFields({
           programIndex: jsonInteger(entry, "index", index)
           startTimeRaw: startTime
           startTimeText: formatStartTime(startTime)
-          startTimeSeconds: timestampSeconds(startTime)
+          startTimeSeconds: timestampSeconds(startTime, localUtcOffsetSeconds)
           durationSeconds: durationSeconds
+          lastItemInPlaylist: jsonBoolean(entry, "LastItemInPlaylist", index = entries.count() - 1)
+          nextProgram: jsonString(entry, "nextProgram")
         })
         program.title = title
         program.description = jsonString(entry, "description")
@@ -116,12 +123,12 @@
         parent.appendChild(program)
       end sub
 
-      function programDuration(entries as object, index as integer) as integer
+      function programDuration(entries as object, index as integer, localUtcOffsetSeconds as integer) as integer
         current = entries[index]
-        currentTime = timestampSeconds(jsonString(current, "starttime"))
+        currentTime = timestampSeconds(jsonString(current, "starttime"), localUtcOffsetSeconds)
         if index + 1 < entries.count()
           nextEntry = entries[index + 1]
-          nextTime = timestampSeconds(jsonString(nextEntry, "starttime"))
+          nextTime = timestampSeconds(jsonString(nextEntry, "starttime"), localUtcOffsetSeconds)
           if currentTime >= 0 and nextTime > currentTime then return nextTime - currentTime
         end if
         remaining = jsonInteger(current, "remainingSeconds", 0)
@@ -129,7 +136,7 @@
         return 1800
       end function
 
-      function timestampSeconds(value as string) as integer
+      function timestampSeconds(value as string, localUtcOffsetSeconds as integer) as integer
         if value.len() < 19 then return -1
         year = value.mid(0, 4).toInt()
         month = value.mid(5, 2).toInt()
@@ -139,6 +146,18 @@
         second = value.mid(17, 2).toInt()
         if year < 1970 or month < 1 or month > 12 or day < 1 or day > 31 then return -1
 
+        localWallTimeSeconds = calendarTimestampSeconds(
+          year,
+          month,
+          day,
+          hour,
+          minute,
+          second
+        )
+        return localWallTimeToUtcSeconds(localWallTimeSeconds, localUtcOffsetSeconds)
+      end function
+
+      function calendarTimestampSeconds(year as integer, month as integer, day as integer, hour as integer, minute as integer, second as integer) as integer
         days = 0
         for currentYear = 1970 to year - 1
           days += 365
@@ -153,6 +172,27 @@
         end if
         days += day - 1
         return days * 86400 + hour * 3600 + minute * 60 + second
+      end function
+
+      function currentLocalUtcOffsetSeconds() as integer
+        current = createObject("roDateTime")
+        current.mark()
+        utcSeconds = current.asSeconds()
+        current.toLocalTime()
+        localWallTimeSeconds = calendarTimestampSeconds(
+          current.getYear(),
+          current.getMonth(),
+          current.getDayOfMonth(),
+          current.getHours(),
+          current.getMinutes(),
+          current.getSeconds()
+        )
+        return utcSeconds - localWallTimeSeconds
+      end function
+
+      function localWallTimeToUtcSeconds(localWallTimeSeconds as integer, localUtcOffsetSeconds as integer) as integer
+        ' The server emits local timestamps without an offset; map them onto Roku's UTC timeline.
+        return localWallTimeSeconds + localUtcOffsetSeconds
       end function
 
       function isLeapYear(year as integer) as boolean
@@ -200,6 +240,13 @@
         if valueType = "Integer" or valueType = "LongInteger" or valueType = "Float" or valueType = "Double"
           return int(value[key])
         end if
+        return fallback
+      end function
+
+      function jsonBoolean(value as dynamic, key as string, fallback as boolean) as boolean
+        if type(value) <> "roAssociativeArray" or not value.doesExist(key) or value[key] = invalid then return fallback
+        valueType = type(value[key])
+        if valueType = "roBoolean" or valueType = "Boolean" then return value[key]
         return fallback
       end function
     ]]>
