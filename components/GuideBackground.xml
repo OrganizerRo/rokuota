@@ -15,7 +15,8 @@
       height="1080"
       visible="false"
       loop="true"
-      mute="true"
+      mute="false"
+	   volume="30"
       enableTrickPlay="false" />
     <Poster
       id="image"

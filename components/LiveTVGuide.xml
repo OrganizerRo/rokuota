@@ -11,10 +11,6 @@
 
   <children>
     <Timer id="nowPlayingTimer" duration="30" repeat="true" />
-
-    <!-- Background Audio Node -->
-    <Audio id="bgAudio" loop="true" />
-
     <!-- Scrollable Grid Viewport for Channel Rows (Starts below header at Y=350) -->
     <Group
       id="viewport"
@@ -27,6 +23,7 @@
     <!-- Fixed header is outside the translated rows and rendered above them. -->
     <Group id="stickyHeader">
       <Rectangle width="1920" height="330" color="#0C131C" />
+      <!-- <Rectangle width="1920" height="330" color="#FFFFFF" /> -->
       <Poster
         id="detailPoster"
         translation="[80,20]"
@@ -63,7 +60,7 @@
         <Rectangle id="timeHeaderBg" width="1387" height="50" color="#141E2B" />
         <Group id="timeLabelsGroup" />
       </Group>
-      
+
       <Group id="timeHeaderGroupBg" translation="[0, 330]">
         <Rectangle id="timeHeaderGroupBg_wallpaper" width="533" height="50" color="#141E2B" />
       </Group>
@@ -80,13 +77,11 @@
         m.detailTitle = m.top.findNode("detailTitle")
         m.detailTime = m.top.findNode("detailTime")
         m.detailDescription = m.top.findNode("detailDescription")
-        m.bgAudio = m.top.findNode("bgAudio")
-
-        setupBackgroundAudio()
-
+ 
         m.top.observeField("content", "onContentChanged")
         m.top.observeField("focusRequested", "focusGuide")
         m.top.observeField("visible", "onVisibilityChanged")
+        m.top.observeField("focused", "onVisibilityChanged")
         m.nowPlayingTimer.observeField("fire", "onNowPlayingTimer")
 
         m.channelIndex = 0
@@ -117,31 +112,11 @@
         onVisibilityChanged()
       end sub
 
-      sub setupBackgroundAudio()
-        audioContent = createObject("roSGNode", "ContentNode")
-		audioPath = appInfo.getValue("bg_audio_path")
-
-		' Fall back to a default local path if missing or blank
-		if audioPath = invalid or audioPath = ""
-			audioPath = "pkg:/bg_music.mp3"
-		end if
-		  
-        audioContent.url = audioPath
-        m.bgAudio.content = audioContent
-        m.bgAudio.control = "preloader"
-      end sub
-
       sub onVisibilityChanged()
-        if m.top.visible
+        if m.top.visible and m.top.hasFocus()
           m.nowPlayingTimer.control = "start"
-          if m.bgAudio <> invalid and m.bgAudio.content <> invalid
-            m.bgAudio.control = "play"
-          end if
         else
           m.nowPlayingTimer.control = "stop"
-          if m.bgAudio <> invalid
-            m.bgAudio.control = "pause"
-          end if
         end if
       end sub
 
@@ -544,6 +519,7 @@
       sub focusGuide()
         m.top.setFocus(true)
         updateFocus()
+		onVisibilityChanged()
       end sub
 
       sub onNowPlayingTimer()
@@ -715,9 +691,7 @@
           activeTile = findTileForSlot(m.channelIndex, m.selectedSlotIndex)
           if activeTile <> invalid
             item = activeTile.item
-            if not item.isOffAir
-              m.top.channelSelected = m.channelIndex
-            else if item.manifestUrl <> invalid and item.manifestUrl <> ""
+            if not item.isOffAir or (item.manifestUrl <> invalid and item.manifestUrl <> "")
               m.top.channelSelected = m.channelIndex
             end if
           end if

@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<component name="MainScene" extends="Scene" initialFocus="tvGuide">
+<component name="MainScene" extends="Scene" initialFocus="onDemand">
   <interface>
     <field id="closeRequested" type="boolean" value="false" />
   </interface>
   <children>
-    <Rectangle width="1920" height="1080" color="#0C131C" />
+    <!-- <Rectangle width="1920" height="1080" color="#0C131C" /> -->
     <GuideBackground
       id="guideBackground"
       videoKey="ondemand_background_video"
       imageKey="ondemand_background_image" />
-    <TVGuide id="tvGuide" />
+    <TVGuide id="tvGuide" visible="false"/>
     <LiveTVGuide id="liveTVGuide" visible="false" />
-    <PlaylistGuide id="playlistGuide" visible="false" />
+    <PlaylistGuide id="playlistGuide" visible="true" />
     <Video
       id="errorStaticVideo"
       width="1920"
@@ -77,7 +77,7 @@
 
         appInfo = createObject("roAppInfo")
         m.serverUrl = resolveServerUrl(appInfo.getValue("channel_catalog_url"))
-
+		
         m.defaultChannel = ""
         defaultChannelValue = appInfo.getValue("default_channel")
         if defaultChannelValue <> invalid then m.defaultChannel = defaultChannelValue.trim()
@@ -113,7 +113,8 @@
         if not m.capabilityValidator.complete then return
         showLoading("Loading TV guide...")
         m.catalogTask.uri = m.serverUrl
-        m.catalogTask.control = "run"
+        loadLiveGuide()
+		'm.catalogTask.control = "run"
       end sub
 
       sub onCatalogLoaded(event as object)
