@@ -57,6 +57,7 @@
         m.tvGuide.observeField("menuRequested", "onTvGuideMenuRequested")
         m.liveTVGuide.observeField("channelSelected", "onLiveChannelSelected")
         m.liveTVGuide.observeField("menuRequested", "onLiveGuideMenuRequested")
+        m.liveTVGuide.observeField("offAirVideoActive", "onOffAirVideoActive")
         m.playlistGuide.observeField("itemSelected", "onPlaylistItemSelected")
         m.playlistGuide.observeField("closeRequested", "onPlaylistGuideClosed")
         m.playlistGuide.observeField("menuRequested", "onPlaylistGuideMenuRequested")
@@ -492,7 +493,19 @@
           m.guideBackground.videoKey = videoKey
           m.guideBackground.imageKey = imageKey
         end if
-        m.guideBackground.active = true
+        setGuideBackgroundActive(not (guideName = "liveTV" and m.liveTVGuide.offAirVideoActive))
+      end sub
+
+      sub onOffAirVideoActive()
+        if m.activeGuide = "liveTV"
+          setGuideBackgroundActive(not m.liveTVGuide.offAirVideoActive)
+        end if
+      end sub
+
+      sub setGuideBackgroundActive(active as boolean)
+        if m.guideBackground.active <> active
+          m.guideBackground.active = active
+        end if
       end sub
 
       function resolveServerUrl(manifestUrl as string) as string

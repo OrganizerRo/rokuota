@@ -11,6 +11,7 @@ channel_catalog_url=http://192.168.0.103:8080/channels/
 channel_catalog_timeout_seconds=10
 startup_video_url=pkg:/tvstatic2p.mp4
 startup_video_mode=firstRun
+off_air_video_url=
 default_channel=
 default_channel_back_destination=home
 live_guide_back_destination=onDemand
@@ -24,6 +25,10 @@ audio_backdrop_opacity=0.25
 waits before showing an error. Missing, zero, and negative values use 10 seconds.
 Catalog and playlist API errors display their dialog over a looping
 `pkg:/tvstatic2p.mp4` full-screen static video.
+
+Set `off_air_video_url` to an HTTP(S) video URL or a packaged `pkg:/` media
+file to display it, muted and looping, in the Live TV guide's Off Air detail
+poster area. Leave it empty to show no off-air artwork.
 
 The left menu provides two guide actions. **On Demand** opens the channel and
 playlist browser backed by `/channels/`, while **Live TV** opens the

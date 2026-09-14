@@ -7,34 +7,37 @@
     <field id="menuRequested" type="boolean" alwaysNotify="true" />
     <field id="fastForwardPressed" type="boolean" alwaysNotify="true" />
     <field id="fastRewindPressed" type="boolean" alwaysNotify="true" />
+    <field id="offAirVideoActive" type="boolean" value="false" />
   </interface>
 
   <children>
     <Timer id="nowPlayingTimer" duration="30" repeat="true" />
-    <!-- Scrollable Grid Viewport for Channel Rows (Starts below header at Y=350) -->
-    <Group
-      id="viewport"
-      translation="[0, 380]"
-      clippingRect="[0, 0, 1920, 710]">
-      <!-- Channel Rows -->
-      <Group id="rows" translation="[0, 0]" />
-    </Group>
+    <Timer id="offAirVideoStartTimer" duration="0.5" repeat="false" />
 
-    <!-- Fixed header is outside the translated rows and rendered above them. -->
+    <!-- Viewport & Header Layout -->
     <Group id="stickyHeader">
       <Rectangle width="1920" height="330" color="#0C131C" />
-      <!-- <Rectangle width="1920" height="330" color="#FFFFFF" /> -->
       <Poster
         id="detailPoster"
         translation="[80,20]"
         width="380"
         height="250"
         loadDisplayMode="scaleToFit" />
+      <Video
+        id="offAirVideo"
+        translation="[80,20]"
+        width="380"
+        height="250"
+        visible="false"
+        loop="true"
+        mute="true"
+        enableTrickPlay="false" />
       <Label
         id="detailTitle"
         translation="[500,20]"
         width="1340"
         height="50"
+        maxLines="2"
         font="font:LargeBoldSystemFont"
         color="#FFFFFF" />
       <Label
@@ -56,13 +59,30 @@
           color="#D7E0EA" />
       </Group>
 
+      <!-- Time Header Pool -->
       <Group id="timeHeaderGroup" translation="[533, 330]">
         <Rectangle id="timeHeaderBg" width="1387" height="50" color="#141E2B" />
         <Group id="timeLabelsGroup" />
       </Group>
 
       <Group id="timeHeaderGroupBg" translation="[0, 330]">
-        <Rectangle id="timeHeaderGroupBg_wallpaper" width="533" height="50" color="#141E2B" />
+        <Rectangle width="533" height="50" color="#141E2B" />
+      </Group>
+    </Group>
+
+    <!-- Scrollable Grid Viewport -->
+    <Group
+      id="viewport"
+      translation="[0, 380]"
+      clippingRect="[0, 0, 1920, 710]">
+      <Group id="rows" />
+      
+      <!-- Single Flying Focus Highlight Frame -->
+      <Group id="focusFrame">
+        <Rectangle width="318" height="6" color="#00FF00" />
+        <Rectangle translation="[0, 140]" width="318" height="6" color="#00FF00" />
+        <Rectangle width="6" height="146" color="#00FF00" />
+        <Rectangle translation="[312, 0]" width="6" height="146" color="#00FF00" />
       </Group>
     </Group>
   </children>
@@ -73,84 +93,51 @@
         m.rows = m.top.findNode("rows")
         m.timeLabelsGroup = m.top.findNode("timeLabelsGroup")
         m.nowPlayingTimer = m.top.findNode("nowPlayingTimer")
+        m.offAirVideoStartTimer = m.top.findNode("offAirVideoStartTimer")
         m.detailPoster = m.top.findNode("detailPoster")
+        m.offAirVideo = m.top.findNode("offAirVideo")
         m.detailTitle = m.top.findNode("detailTitle")
         m.detailTime = m.top.findNode("detailTime")
         m.detailDescription = m.top.findNode("detailDescription")
- 
+        m.focusFrame = m.top.findNode("focusFrame")
+
         m.top.observeField("content", "onContentChanged")
-        m.top.observeField("focusRequested", "focusGuide")
+        m.top.observeField("focusRequested", "onFocusRequested")
         m.top.observeField("visible", "onVisibilityChanged")
         m.top.observeField("focused", "onVisibilityChanged")
         m.nowPlayingTimer.observeField("fire", "onNowPlayingTimer")
+        m.offAirVideoStartTimer.observeField("fire", "startOffAirVideo")
 
+        ' Screen Constants
+        m.ROW_HEIGHT = 150
+        m.CHANNEL_WIDTH = 533
+        m.SLOT_WIDTH = 320
+        m.VISIBLE_ROWS = 4
+        ' The 1387px program viewport holds four complete 320px slots.
+        m.VISIBLE_COLS = 4
+        m.TOTAL_SLOTS = 48
+        m.DETAIL_VIEWPORT_HEIGHT = 220
+        m.DETAIL_SCROLL_STEP = 4
+
+        ' Data Index Cursors
         m.channelIndex = 0
         m.selectedSlotIndex = 0
-        m.poolStartSlot = 0
-        m.scrollStartSlot = 0
-        m.rowHeight = 150
-        m.channelWidth = 533
-        m.slotWidth = 320
-        m.visibleSlotCount = 5
-        m.windowSlotCount = 12
-        m.totalSlotCount = 48
-        m.channelPageSize = 4
-        m.detailDescriptionViewportHeight = 220
-        m.detailDescriptionScrollStep = 4
+        m.topRowIndex = 0
+        m.leftColIndex = 0
         m.detailDescriptionScrollOffset = 0
-        m.detailContentKey = ""
-        m.defaultFocusColor = "#00FF00"
-        m.nowPlayingColor = "#FFD54A"
+        m.offAirVideoUrl = manifestString("off_air_video_url")
 
-        m.rowNodes = []
-        m.programGroups = []
-        m.programTiles = []
-        m.channelTimelines = []
-        m.timeLabelTiles = []
-        m.activeFocus = invalid
+        m.rowPool = []
+        m.headerLabelPool = []
+        m.programIndex = {}
 
-        onVisibilityChanged()
+        buildComponentPool()
       end sub
 
-      sub onVisibilityChanged()
-        if m.top.visible and m.top.hasFocus()
-          m.nowPlayingTimer.control = "start"
-        else
-          m.nowPlayingTimer.control = "stop"
-        end if
-      end sub
-
-      sub onContentChanged()
-        calculateWindowStartTime()
-        m.channelIndex = 0
-        m.selectedSlotIndex = 0
-        m.poolStartSlot = 0
-        m.scrollStartSlot = 0
-        m.detailContentKey = ""
-        buildTimeHeader()
-        buildRows()
-        updateFocus()
-      end sub
-
-      sub calculateWindowStartTime()
-        dt = createObject("roDateTime")
-        dt.mark()
-
-        utcSecs = dt.asSeconds()
-        localSecs = utcSecs - (dt.getTimeZoneOffset() * 60)
-        secondsIntoBlock = localSecs mod 1800
-        m.windowStartSeconds = utcSecs - secondsIntoBlock
-      end sub
-
-      sub buildTimeHeader()
-        while m.timeLabelsGroup.getChildCount() > 0
-          m.timeLabelsGroup.removeChildIndex(0)
-        end while
-
-        m.timeLabelTiles = []
-        for i = 0 to m.windowSlotCount - 1
+      sub buildComponentPool()
+        for c = 0 to m.VISIBLE_COLS - 1
           lbl = createObject("roSGNode", "Label")
-          lbl.width = m.slotWidth - 20
+          lbl.width = m.SLOT_WIDTH - 20
           lbl.height = 30
           lbl.font = "font:SmallBoldSystemFont"
           lbl.color = "#9DB0C3"
@@ -162,539 +149,395 @@
           line.color = "#2A3A4E"
           m.timeLabelsGroup.appendChild(line)
 
-          headerTile = { label: lbl, line: line, slotIndex: i }
-          bindTimeLabel(headerTile, i)
-          m.timeLabelTiles.push(headerTile)
+          m.headerLabelPool.push({ label: lbl, line: line })
         end for
-      end sub
 
-      sub buildRows()
-        while m.rows.getChildCount() > 0
-          m.rows.removeChildIndex(0)
-        end while
+        for r = 0 to m.VISIBLE_ROWS - 1
+          rowGroup = createObject("roSGNode", "Group")
+          
+          card = rowGroup.createChild("Group")
+          card.clippingRect = [0, 0, m.CHANNEL_WIDTH - 2, m.ROW_HEIGHT - 4]
+          bg = card.createChild("Rectangle")
+          bg.width = m.CHANNEL_WIDTH - 2
+          bg.height = m.ROW_HEIGHT - 4
+          bg.color = "#182331"
 
-        m.rowNodes = []
-        m.programGroups = []
-        m.programTiles = []
-        m.channelTimelines = []
-        m.activeFocus = invalid
+          title = card.createChild("Label")
+          title.translation = [18, 30]
+          title.width = m.CHANNEL_WIDTH - 36
+          title.height = 40
+          title.font = "font:MediumBoldSystemFont"
+          title.color = "#FFFFFF"
 
-        if m.top.content = invalid then return
+          progGroup = rowGroup.createChild("Group")
+          progGroup.translation = [m.CHANNEL_WIDTH, 0]
 
-        for channelIndex = 0 to m.top.content.getChildCount() - 1
-          channel = m.top.content.getChild(channelIndex)
-          row = createObject("roSGNode", "Group")
-          row.translation = [0, channelIndex * m.rowHeight]
+          slots = []
+          for c = 0 to m.VISIBLE_COLS - 1
+            tile = progGroup.createChild("Group")
+            tileBg = tile.createChild("Rectangle")
+            tileBg.width = m.SLOT_WIDTH - 2
+            tileBg.height = m.ROW_HEIGHT - 4
+            tileBg.color = "#202E3D"
 
-          programsGroup = createObject("roSGNode", "Group")
-          programsGroup.translation = [m.channelWidth, 0]
-          row.appendChild(programsGroup)
+            lbl = tile.createChild("Label")
+            lbl.translation = [10, 15]
+            lbl.width = m.SLOT_WIDTH - 20
+            lbl.height = 30
+            lbl.font = "font:SmallBoldSystemFont"
+            lbl.color = "#FFFFFF"
 
-          channelTiles = []
+            timeLbl = tile.createChild("Label")
+            timeLbl.translation = [10, 50]
+            timeLbl.width = m.SLOT_WIDTH - 20
+            timeLbl.height = 25
+            timeLbl.font = "font:SmallSystemFont"
+            timeLbl.color = "#7E92A7"
 
-          timeline = normalizeChannelTimeline(channel)
-          m.channelTimelines.push(timeline)
-
-          for slotIndex = 0 to m.windowSlotCount - 1
-            tileResult = createProgramTile(m.slotWidth)
-            programsGroup.appendChild(tileResult.tile)
-            bindProgramTile(tileResult, channelIndex, slotIndex)
-            channelTiles.push(tileResult)
+            slots.push({
+              tile: tile,
+              bg: tileBg,
+              label: lbl,
+              timeLabel: timeLbl
+            })
           end for
 
-          appendChannelCard(row, channel)
-
-          m.rows.appendChild(row)
-          m.rowNodes.push(row)
-          m.programGroups.push(programsGroup)
-          m.programTiles.push(channelTiles)
+          m.rows.appendChild(rowGroup)
+          m.rowPool.push({
+            rowGroup: rowGroup,
+            titleLabel: title,
+            progGroup: progGroup,
+            slots: slots
+          })
         end for
       end sub
 
-      function normalizeChannelTimeline(channel as object) as object
-        normalized = []
-        currentTime = m.windowStartSeconds
-        maxTime = m.windowStartSeconds + (m.totalSlotCount * 1800)
-
-        if channel = invalid then return normalized
-
-        offAirUrl = ""
-        if channel.hasField("program_offair") and channel.program_offair <> invalid
-          offAirUrl = channel.program_offair
+      sub onVisibilityChanged()
+        if m.top.visible and m.top.hasFocus()
+          m.nowPlayingTimer.control = "start"
+        else
+          m.nowPlayingTimer.control = "stop"
         end if
-
-        numChildren = channel.getChildCount()
-        if numChildren = 0
-          normalized.push(createOffAirItem(currentTime, maxTime - currentTime, offAirUrl))
-          return normalized
+        if not m.top.visible
+          hideOffAirVideo()
+        else if m.top.offAirVideoActive
+          showOffAirVideo()
         end if
+      end sub
 
-        firstProgramStart = -1
-        cycleEnd = -1
-        for i = 0 to numChildren - 1
-          prog = channel.getChild(i)
-          if prog <> invalid
-            progStart = currentTime
-            if prog.hasField("startTimeSeconds") and prog.startTimeSeconds <> invalid and prog.startTimeSeconds > 0
-              progStart = prog.startTimeSeconds
-            end if
+      sub onFocusRequested()
+        if m.top.focusRequested
+          m.top.setFocus(true)
+          renderView()
+        end if
+      end sub
 
-            progDuration = 1800
-            if prog.hasField("durationSeconds") and prog.durationSeconds <> invalid and prog.durationSeconds > 0
-              progDuration = prog.durationSeconds
-            end if
+      sub onContentChanged()
+        calculateWindowStartTime()
+        buildFastProgramIndex()
+        m.channelIndex = 0
+        m.selectedSlotIndex = 0
+        m.topRowIndex = 0
+        m.leftColIndex = 0
+        renderView()
+      end sub
 
-            if firstProgramStart < 0 then firstProgramStart = progStart
-            progEnd = progStart + progDuration
-            if progEnd > cycleEnd then cycleEnd = progEnd
+      sub calculateWindowStartTime()
+        dt = createObject("roDateTime")
+        dt.mark()
+        utcSecs = dt.asSeconds()
+        dt.toLocalTime()
+        secondsIntoBlock = (dt.getMinutes() * 60 + dt.getSeconds()) mod 1800
+        m.windowStartSeconds = utcSecs - secondsIntoBlock
+      end sub
 
-            if progStart > currentTime
-              gapDuration = progStart - currentTime
-              normalized.push(createOffAirItem(currentTime, gapDuration, offAirUrl))
-              currentTime = progStart
-            end if
+      sub buildFastProgramIndex()
+        m.programIndex = {}
+        if m.top.content = invalid then return
 
-            if (progStart + progDuration) > m.windowStartSeconds and progStart < maxTime
-              normalized.push(createProgramItem(prog, progStart, progDuration))
-              if progEnd > currentTime then currentTime = progEnd
-            end if
-          end if
-
-          if currentTime >= maxTime then exit for
-        end for
-
-        if channelPlaylistLoops(channel) and firstProgramStart >= 0 and cycleEnd > firstProgramStart
-          cycleDuration = cycleEnd - firstProgramStart
-          cycleOffset = cycleDuration
-
-          while currentTime < maxTime
-            for i = 0 to numChildren - 1
-              prog = channel.getChild(i)
-              if prog <> invalid
-                progStart = firstProgramStart
-                if prog.hasField("startTimeSeconds") and prog.startTimeSeconds <> invalid and prog.startTimeSeconds > 0
-                  progStart = prog.startTimeSeconds
-                end if
-                progStart += cycleOffset
-
-                progDuration = 1800
-                if prog.hasField("durationSeconds") and prog.durationSeconds <> invalid and prog.durationSeconds > 0
-                  progDuration = prog.durationSeconds
-                end if
-
-                if progStart > currentTime
-                  normalized.push(createOffAirItem(currentTime, progStart - currentTime, offAirUrl))
-                  currentTime = progStart
-                end if
-
-                progEnd = progStart + progDuration
-                if progEnd > m.windowStartSeconds and progStart < maxTime
-                  normalized.push(createProgramItem(prog, progStart, progDuration))
-                  if progEnd > currentTime then currentTime = progEnd
-                end if
+        for cIdx = 0 to m.top.content.getChildCount() - 1
+          chNode = m.top.content.getChild(cIdx)
+          if chNode <> invalid
+            for pIdx = 0 to chNode.getChildCount() - 1
+              prog = chNode.getChild(pIdx)
+              if prog <> invalid and prog.startTimeSeconds <> invalid and prog.startTimeSeconds >= 0
+                st = prog.startTimeSeconds
+                dur = prog.durationSeconds
+                if dur <= 0 then dur = 1800
+                
+                ' Only map block instants at or after the program starts.
+                blockStart = st - (st mod 1800)
+                if blockStart < st then blockStart += 1800
+                blockEnd = st + dur
+                
+                currBlock = blockStart
+                while currBlock < blockEnd
+                  key = cIdx.toStr() + "_" + currBlock.toStr()
+                  if not m.programIndex.doesExist(key)
+                    m.programIndex[key] = prog
+                  end if
+                  currBlock += 1800
+                end while
               end if
-
-              if currentTime >= maxTime then exit for
             end for
-            cycleOffset += cycleDuration
-          end while
-        end if
-
-        if currentTime < maxTime
-          normalized.push(createOffAirItem(currentTime, maxTime - currentTime, offAirUrl))
-        end if
-
-        return normalized
-      end function
-
-      function channelPlaylistLoops(channel as object) as boolean
-        if channel = invalid or channel.getChildCount() = 0 then return false
-        lastProgram = channel.getChild(channel.getChildCount() - 1)
-        if lastProgram = invalid then return false
-        if not lastProgram.hasField("lastItemInPlaylist") or lastProgram.lastItemInPlaylist <> true then return false
-        if not lastProgram.hasField("nextProgram") or lastProgram.nextProgram = invalid then return false
-        return lastProgram.nextProgram <> ""
-      end function
-
-      function createProgramItem(prog as object, startTime as integer, duration as integer) as object
-        progTitle = "Program"
-        if prog.hasField("title") and prog.title <> invalid then progTitle = prog.title
-
-        progDesc = ""
-        if prog.hasField("description") and prog.description <> invalid then progDesc = prog.description
-
-        progPoster = ""
-        if prog.hasField("HDPosterUrl") and prog.HDPosterUrl <> invalid then progPoster = prog.HDPosterUrl
-
-        progManifest = ""
-        if prog.hasField("manifestUrl") and prog.manifestUrl <> invalid then progManifest = prog.manifestUrl
-
-        return {
-          title: progTitle,
-          description: progDesc,
-          HDPosterUrl: progPoster,
-          startTimeSeconds: startTime,
-          durationSeconds: duration,
-          startTimeText: formatSlotTime(startTime),
-          isOffAir: false,
-          manifestUrl: progManifest
-        }
-      end function
-
-      function findTimelineItemAtTime(channelIdx as integer, targetSeconds as integer) as object
-        if channelIdx < 0 or channelIdx >= m.channelTimelines.count() then return invalid
-        timeline = m.channelTimelines[channelIdx]
-        for each item in timeline
-          if targetSeconds >= item.startTimeSeconds and targetSeconds < (item.startTimeSeconds + item.durationSeconds)
-            return item
           end if
         end for
+      end sub
+
+      sub renderView()
+        if m.top.content = invalid then return
+        totalChannels = m.top.content.getChildCount()
+
+        if m.channelIndex < m.topRowIndex
+          m.topRowIndex = m.channelIndex
+        else if m.channelIndex >= m.topRowIndex + m.VISIBLE_ROWS
+          m.topRowIndex = m.channelIndex - m.VISIBLE_ROWS + 1
+        end if
+
+        if m.selectedSlotIndex < m.leftColIndex
+          m.leftColIndex = m.selectedSlotIndex
+        else if m.selectedSlotIndex >= m.leftColIndex + m.VISIBLE_COLS
+          m.leftColIndex = m.selectedSlotIndex - m.VISIBLE_COLS + 1
+        end if
+
+        ' Headers
+        for c = 0 to m.VISIBLE_COLS - 1
+          colIdx = m.leftColIndex + c
+          lblRec = m.headerLabelPool[c]
+          xPos = c * m.SLOT_WIDTH
+          lblRec.label.translation = [xPos + 10, 10]
+          lblRec.label.text = formatSlotTime(m.windowStartSeconds + (colIdx * 1800))
+          lblRec.line.translation = [xPos, 0]
+        end for
+
+        ' Rows
+        for r = 0 to m.VISIBLE_ROWS - 1
+          chIdx = m.topRowIndex + r
+          rowRec = m.rowPool[r]
+
+          if chIdx < totalChannels
+            rowRec.rowGroup.visible = true
+            rowRec.rowGroup.translation = [0, r * m.ROW_HEIGHT]
+            chNode = m.top.content.getChild(chIdx)
+            if chNode <> invalid and chNode.title <> invalid
+              rowRec.titleLabel.text = chNode.title
+            end if
+
+            for c = 0 to m.VISIBLE_COLS - 1
+              colIdx = m.leftColIndex + c
+              slotRec = rowRec.slots[c]
+              slotRec.tile.translation = [c * m.SLOT_WIDTH, 0]
+
+              targetTime = m.windowStartSeconds + (colIdx * 1800)
+              prog = findProgramAtTime(chIdx, targetTime)
+
+              if prog <> invalid
+                slotRec.label.text = prog.title
+                slotRec.timeLabel.text = prog.startTimeText
+                slotRec.bg.color = "#202E3D"
+                slotRec.label.color = "#FFFFFF"
+              else
+                slotRec.label.text = "Off Air"
+                slotRec.timeLabel.text = formatSlotTime(targetTime)
+                slotRec.bg.color = "#121A24"
+                slotRec.label.color = "#5C6F84"
+              end if
+            end for
+          else
+            rowRec.rowGroup.visible = false
+          end if
+        end for
+
+        ' Position Focus Highlight Frame
+        relRow = m.channelIndex - m.topRowIndex
+        relCol = m.selectedSlotIndex - m.leftColIndex
+        m.focusFrame.translation = [m.CHANNEL_WIDTH + (relCol * m.SLOT_WIDTH), relRow * m.ROW_HEIGHT]
+
+        updateDetails()
+      end sub
+
+      function findProgramAtTime(channelIdx as integer, targetTime as integer) as object
+        scheduleTime = loopedScheduleTime(channelIdx, targetTime)
+        if scheduleTime < 0 then return invalid
+
+        key = channelIdx.toStr() + "_" + scheduleTime.toStr()
+        if m.programIndex.doesExist(key)
+          prog = m.programIndex[key]
+          if prog <> invalid and prog.startTimeSeconds <> invalid and prog.durationSeconds <> invalid
+            duration = prog.durationSeconds
+            if duration <= 0 then duration = 1800
+            if scheduleTime >= prog.startTimeSeconds and scheduleTime < prog.startTimeSeconds + duration
+              return prog
+            end if
+          end if
+        end if
         return invalid
       end function
 
-      sub bindTimeLabel(headerTile as object, slotIndex as integer)
-        xPos = slotIndex * m.slotWidth
-        headerTile.slotIndex = slotIndex
-        headerTile.label.translation = [xPos + 10, 10]
-        headerTile.label.text = formatSlotTime(m.windowStartSeconds + (slotIndex * 1800))
-        headerTile.line.translation = [xPos, 0]
-      end sub
+      function loopedScheduleTime(channelIdx as integer, targetTime as integer) as integer
+        if m.top.content = invalid then return -1
+        channel = m.top.content.getChild(channelIdx)
+        if channel = invalid or channel.isLooping <> true then return targetTime
+        if channel.getChildCount() = 0 then return -1
 
-      sub bindProgramTile(tileRecord as object, channelIdx as integer, slotIndex as integer)
-        targetTime = selectedTargetTime(
-          m.windowStartSeconds,
-          slotIndex,
-          currentUtcSeconds()
-        )
-        item = findTimelineItemAtTime(channelIdx, targetTime)
-        if item = invalid
-          item = createOffAirItem(
-            m.windowStartSeconds + (slotIndex * 1800),
-            1800,
-            ""
-          )
-        end if
-
-        tileRecord.slotIndex = slotIndex
-        tileRecord.item = item
-        tileRecord.tile.translation = [slotIndex * m.slotWidth, 0]
-        tileRecord.bg.width = m.slotWidth - 2
-        tileRecord.label.width = m.slotWidth - 20
-        tileRecord.timeLabel.width = m.slotWidth - 20
-        tileRecord.label.text = item.title
-        tileRecord.timeLabel.text = item.startTimeText
-        if item.isOffAir
-          tileRecord.bg.color = "#121A24"
-          tileRecord.label.color = "#5C6F84"
-        else
-          tileRecord.bg.color = "#202E3D"
-          tileRecord.label.color = "#FFFFFF"
-        end if
-      end sub
-
-      sub recycleWindowForSelection()
-        while m.selectedSlotIndex >= m.poolStartSlot + m.windowSlotCount
-          expiredSlot = m.poolStartSlot
-          replacementSlot = m.poolStartSlot + m.windowSlotCount
-          recycleSlot(expiredSlot, replacementSlot)
-          m.poolStartSlot++
-        end while
-
-        while m.selectedSlotIndex < m.poolStartSlot
-          expiredSlot = m.poolStartSlot + m.windowSlotCount - 1
-          replacementSlot = m.poolStartSlot - 1
-          recycleSlot(expiredSlot, replacementSlot)
-          m.poolStartSlot--
-        end while
-      end sub
-
-      sub recycleSlot(expiredSlot as integer, replacementSlot as integer)
-        poolIndex = expiredSlot mod m.windowSlotCount
-        headerTile = m.timeLabelTiles[poolIndex]
-        bindTimeLabel(headerTile, replacementSlot)
-
-        for channelIdx = 0 to m.programTiles.count() - 1
-          tileRecord = m.programTiles[channelIdx][poolIndex]
-          tileRecord.focus.opacity = 0.0
-          bindProgramTile(tileRecord, channelIdx, replacementSlot)
+        firstProgram = channel.getChild(0)
+        if firstProgram = invalid or firstProgram.startTimeSeconds = invalid then return -1
+        cycleDuration = 0
+        for programIdx = 0 to channel.getChildCount() - 1
+          program = channel.getChild(programIdx)
+          if program = invalid then return -1
+          duration = program.durationSeconds
+          if duration <= 0 then duration = 1800
+          cycleDuration += duration
         end for
-      end sub
+        if cycleDuration <= 0 then return -1
+        if targetTime < firstProgram.startTimeSeconds then return targetTime
 
-      function createOffAirItem(startTime as integer, duration as integer, offAirUrl as string) as object
-        return {
-          title: "Off Air",
-          description: "This channel is currently off air.",
-          HDPosterUrl: "",
-          startTimeSeconds: startTime,
-          durationSeconds: duration,
-          startTimeText: formatSlotTime(startTime),
-          isOffAir: true,
-          manifestUrl: offAirUrl
-        }
+        return firstProgram.startTimeSeconds + ((targetTime - firstProgram.startTimeSeconds) mod cycleDuration)
       end function
 
-      function createProgramTile(width as integer) as object
-        tile = createObject("roSGNode", "Group")
+      sub updateDetails()
+        if m.top.content = invalid then return
+        chNode = m.top.content.getChild(m.channelIndex)
+        if chNode = invalid then return
 
-        bg = tile.createChild("Rectangle")
-        bg.width = width - 2
-        bg.height = m.rowHeight - 4
-        bg.color = "#202E3D"
+        targetTime = m.windowStartSeconds + (m.selectedSlotIndex * 1800)
+        prog = findProgramAtTime(m.channelIndex, targetTime)
 
-        lbl = tile.createChild("Label")
-        lbl.translation = [10, 15]
-        lbl.width = width - 20
-        lbl.height = 30
-        lbl.font = "font:SmallBoldSystemFont"
-        lbl.color = "#FFFFFF"
-
-        timeLbl = tile.createChild("Label")
-        timeLbl.translation = [10, 50]
-        timeLbl.width = width - 20
-        timeLbl.height = 25
-        timeLbl.font = "font:SmallSystemFont"
-        timeLbl.color = "#7E92A7"
-
-        focus = tile.createChild("Group")
-        focus.opacity = 0.0
-        appendBorder(focus, width - 2, m.rowHeight - 4, 6, m.defaultFocusColor)
-
-        return {
-          tile: tile,
-          bg: bg,
-          label: lbl,
-          timeLabel: timeLbl,
-          focus: focus,
-          slotIndex: -1,
-          item: invalid
-        }
-      end function
-
-      sub appendBorder(group as object, width as integer, height as integer, thickness as integer, color as string)
-        topB = group.createChild("Rectangle")
-        topB.width = width
-        topB.height = thickness
-        topB.color = color
-
-        botB = group.createChild("Rectangle")
-        botB.translation = [0, height - thickness]
-        botB.width = width
-        botB.height = thickness
-        botB.color = color
-
-        leftB = group.createChild("Rectangle")
-        leftB.width = thickness
-        leftB.height = height
-        leftB.color = color
-
-        rightB = group.createChild("Rectangle")
-        rightB.translation = [width - thickness, 0]
-        rightB.width = thickness
-        rightB.height = height
-        rightB.color = color
-      end sub
-
-      sub appendChannelCard(row as object, channel as object)
-        card = createObject("roSGNode", "Group")
-        card.clippingRect = [0, 0, m.channelWidth - 2, m.rowHeight - 4]
-
-        bg = card.createChild("Rectangle")
-        bg.width = m.channelWidth - 2
-        bg.height = m.rowHeight - 4
-        bg.color = "#182331"
-
-        title = card.createChild("Label")
-        title.translation = [18, 30]
-        title.width = m.channelWidth - 36
-        title.height = 40
-        title.font = "font:MediumBoldSystemFont"
-        title.color = "#FFFFFF"
-        if channel <> invalid and channel.hasField("title") and channel.title <> invalid
-          title.text = channel.title
+        if prog <> invalid
+          hideOffAirVideo()
+          m.detailTitle.text = prog.title
+          m.detailTime.text = prog.startTimeText + " (" + formatDuration(prog.durationSeconds) + ")"
+          m.detailDescription.text = prog.description
+          if prog.HDPosterUrl <> invalid and prog.HDPosterUrl <> ""
+            m.detailPoster.uri = prog.HDPosterUrl
+          else
+            m.detailPoster.uri = ""
+          end if
+        else
+          m.detailTitle.text = "Off Air"
+          m.detailTime.text = formatSlotTime(targetTime)
+          m.detailDescription.text = "This channel is currently off air."
+          m.detailPoster.uri = ""
+          showOffAirVideo()
         end if
-
-        row.appendChild(card)
+        
+        m.detailDescriptionScrollOffset = 0
+        m.detailDescription.translation = [0, 0]
       end sub
 
-      sub focusGuide()
-        m.top.setFocus(true)
-        updateFocus()
-		onVisibilityChanged()
+      sub showOffAirVideo()
+        if m.offAirVideoUrl = "" then
+          m.offAirVideo.visible = false
+          return
+        end if
+        if not m.top.offAirVideoActive
+          m.top.offAirVideoActive = true
+        end if
+        if m.offAirVideo.content = invalid
+          content = createObject("roSGNode", "ContentNode")
+          content.url = m.offAirVideoUrl
+          content.streamFormat = streamFormat(m.offAirVideoUrl)
+          content.httpCertificatesFile = "common:/certs/ca-bundle.crt"
+          m.offAirVideo.content = content
+        end if
+        if not m.offAirVideo.visible
+          m.offAirVideoStartTimer.control = "start"
+        end if
       end sub
+
+      sub startOffAirVideo()
+        if not m.top.offAirVideoActive or not m.top.visible then return
+        m.offAirVideo.visible = true
+        if m.offAirVideo.state <> "playing" then m.offAirVideo.control = "play"
+      end sub
+
+      sub hideOffAirVideo()
+        if m.top.offAirVideoActive
+          m.offAirVideoStartTimer.control = "stop"
+          m.top.offAirVideoActive = false
+        end if
+        if m.offAirVideo.visible
+          m.offAirVideo.control = "stop"
+        end if
+        m.offAirVideo.visible = false
+      end sub
+
+      function manifestString(key as string) as string
+        appInfo = createObject("roAppInfo")
+        value = appInfo.getValue(key)
+        if value = invalid then return ""
+        return value.trim()
+      end function
+
+      function streamFormat(url as string) as string
+        lowered = LCase(url)
+        if instr(1, lowered, ".m3u8") > 0 then return "hls"
+        if instr(1, lowered, ".mpd") > 0 then return "dash"
+        return "mp4"
+      end function
 
       sub onNowPlayingTimer()
-        updateFocus()
-      end sub
-
-      sub updateFocus()
-        if m.activeFocus <> invalid then m.activeFocus.opacity = 0.0
-        m.activeFocus = invalid
-        if m.programTiles.count() = 0 then return
-
-        recycleWindowForSelection()
-
-        activeTile = findTileForSlot(m.channelIndex, m.selectedSlotIndex)
-        if activeTile <> invalid
-          activeTile.focus.opacity = 1.0
-          m.activeFocus = activeTile.focus
-          updateProgramDetails(activeTile.item)
-        end if
-
-        updateVerticalScroll()
-        updateHorizontalScroll()
-      end sub
-
-      function findTileForSlot(channelIdx as integer, slotIndex as integer) as object
-        if channelIdx < 0 or channelIdx >= m.programTiles.count() then return invalid
-        poolIndex = slotIndex mod m.windowSlotCount
-        tileRecord = m.programTiles[channelIdx][poolIndex]
-        if tileRecord.slotIndex = slotIndex then return tileRecord
-        return invalid
-      end function
-
-      function currentUtcSeconds() as integer
-        current = createObject("roDateTime")
-        current.mark()
-        return current.asSeconds()
-      end function
-
-      function selectedTargetTime(windowStartSeconds as integer, selectedSlotIndex as integer, nowSeconds as integer) as integer
-        if selectedSlotIndex = 0 then return nowSeconds
-        return windowStartSeconds + (selectedSlotIndex * 1800) + 60
-      end function
-
-      sub updateProgramDetails(item as object)
-        if item = invalid then return
-        m.detailTitle.text = item.title
-        m.detailTime.text = item.startTimeText + " (" + formatDuration(item.durationSeconds) + ")"
-
-        detailContentKey = m.channelIndex.toStr() + "|" + m.selectedSlotIndex.toStr() + "|" + item.startTimeSeconds.toStr()
-        if detailContentKey <> m.detailContentKey
-          m.detailContentKey = detailContentKey
-          m.detailDescription.text = item.description
-          setDetailDescriptionScroll(0)
-        end if
-
-        if item.HDPosterUrl <> ""
-          m.detailPoster.uri = item.HDPosterUrl
-        else
-          m.detailPoster.uri = "pkg:/images/video_placeholder.png"
-        end if
-      end sub
-
-      sub updateHorizontalScroll()
-        if m.selectedSlotIndex < m.scrollStartSlot
-          m.scrollStartSlot = m.selectedSlotIndex
-        else if m.selectedSlotIndex >= m.scrollStartSlot + m.visibleSlotCount
-          m.scrollStartSlot = m.selectedSlotIndex - m.visibleSlotCount + 1
-        end if
-
-        targetX = m.scrollStartSlot * m.slotWidth
-        m.timeLabelsGroup.translation = [-targetX, 0]
-        for i = 0 to m.programGroups.count() - 1
-          m.programGroups[i].translation = [m.channelWidth - targetX, 0]
-        end for
-      end sub
-
-      sub updateVerticalScroll()
-        firstVisible = m.channelIndex - 1
-        if firstVisible < 0 then firstVisible = 0
-        m.rows.translation = [0, -(firstVisible * m.rowHeight)]
-      end sub
-
-      function detailDescriptionMaxScroll() as float
-        contentBounds = m.detailDescription.boundingRect()
-        maxScroll = contentBounds.height - m.detailDescriptionViewportHeight
-        if maxScroll < 0 then return 0
-        return maxScroll
-      end function
-
-      sub setDetailDescriptionScroll(offset as float)
-        maxScroll = detailDescriptionMaxScroll()
-        if offset < 0 then offset = 0
-        if offset > maxScroll then offset = maxScroll
-        m.detailDescriptionScrollOffset = offset
-        m.detailDescription.translation = [0, -offset]
+        calculateWindowStartTime()
+        renderView()
       end sub
 
       function scrollDetailDescription(direction as integer) as boolean
-        maxScroll = detailDescriptionMaxScroll()
-        if direction > 0
-          if m.detailDescriptionScrollOffset >= maxScroll then return false
-          setDetailDescriptionScroll(m.detailDescriptionScrollOffset + m.detailDescriptionScrollStep)
-        else
-          if m.detailDescriptionScrollOffset <= 0 then return false
-          setDetailDescriptionScroll(m.detailDescriptionScrollOffset - m.detailDescriptionScrollStep)
+        contentBounds = m.detailDescription.boundingRect()
+        maxScroll = contentBounds.height - m.DETAIL_VIEWPORT_HEIGHT
+        if maxScroll <= 0 then return false
+
+        newOffset = m.detailDescriptionScrollOffset + (direction * m.DETAIL_SCROLL_STEP)
+        if newOffset < 0 then newOffset = 0
+        if newOffset > maxScroll then newOffset = maxScroll
+
+        if newOffset <> m.detailDescriptionScrollOffset
+          m.detailDescriptionScrollOffset = newOffset
+          m.detailDescription.translation = [0, -newOffset]
+          return true
         end if
-        return true
+        return false
       end function
 
-      sub pageChannelRows(direction as integer)
-        if m.rowNodes.count() = 0 then return
-        nextChannelIndex = m.channelIndex + (direction * m.channelPageSize)
-        if nextChannelIndex < 0 then nextChannelIndex = 0
-
-        lastChannelIndex = m.rowNodes.count() - 1
-        if nextChannelIndex > lastChannelIndex then nextChannelIndex = lastChannelIndex
-        if nextChannelIndex <> m.channelIndex
-          m.channelIndex = nextChannelIndex
-          updateFocus()
-        end if
-      end sub
-
-      sub onFastForward()
-        m.top.fastForwardPressed = true
-        scrollDetailDescription(1)
-      end sub
-
-      sub onFastRewind()
-        m.top.fastRewindPressed = true
-        scrollDetailDescription(-1)
-      end sub
-
       function onKeyEvent(key as string, press as boolean) as boolean
-        if not press then return false
+        if not press or m.top.content = invalid then return false
 
         if key = "fastforward"
-          onFastForward()
+          m.top.fastForwardPressed = true
+          scrollDetailDescription(1)
           return true
         else if key = "rewind"
-          onFastRewind()
+          m.top.fastRewindPressed = true
+          scrollDetailDescription(-1)
           return true
         else if key = "up"
           if m.channelIndex > 0
             m.channelIndex--
-            updateFocus()
+            renderView()
           end if
           return true
         else if key = "down"
-          if m.channelIndex + 1 < m.rowNodes.count()
+          if m.channelIndex + 1 < m.top.content.getChildCount()
             m.channelIndex++
-            updateFocus()
+            renderView()
           end if
           return true
         else if key = "right"
-          if m.selectedSlotIndex + 1 < m.totalSlotCount
+          if m.selectedSlotIndex + 1 < m.TOTAL_SLOTS
             m.selectedSlotIndex++
-            updateFocus()
+            renderView()
           end if
           return true
         else if key = "left"
           if m.selectedSlotIndex > 0
             m.selectedSlotIndex--
-            updateFocus()
+            renderView()
           else
             m.top.menuRequested = true
           end if
           return true
         else if key = "OK"
-          activeTile = findTileForSlot(m.channelIndex, m.selectedSlotIndex)
-          if activeTile <> invalid
-            item = activeTile.item
-            if not item.isOffAir or (item.manifestUrl <> invalid and item.manifestUrl <> "")
-              m.top.channelSelected = m.channelIndex
-            end if
-          end if
+          m.top.channelSelected = m.channelIndex
           return true
         end if
         return false

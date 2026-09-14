@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="AnimatedPoster" extends="Group">
+
+    <interface>
+        <!-- Always provided -->
+        <field id="uri" type="string" />
+
+        <!-- Sprite sheet fields (optional) -->
+        <field id="frameWidth" type="integer" />
+        <field id="frameHeight" type="integer" />
+        <field id="frameCount" type="integer" />
+        <field id="fps" type="integer" />
+
+        <!-- Desired width; height auto-scales -->
+        <field id="targetWidth" type="float" />
+    </interface>
+
+    <children>
+        <!-- Static Poster -->
+        <Poster
+            id="poster"
+            visible="true"
+        />
+
+        <!-- Animated Sprite -->
+        <AnimatedSprite
+            id="sprite"
+            loop="true"
+            playing="false"
+            visible="false"
+        />
+    </children>
+
+    <script type="text/brightscript"><![CDATA[
+        sub init()
+            m.poster = m.top.findNode("poster")
+            m.sprite = m.top.findNode("sprite")
+
+            ' Determine if this is a sprite sheet
+            isSpriteSheet = (m.top.frameWidth > 0) and (m.top.frameHeight > 0) and (m.top.frameCount > 1)
+
+            if isSpriteSheet then
+                setupSpriteSheet()
+            else
+                setupStaticPoster()
+            end if
+        end sub
+
+
+        ' -------------------------------
+        ' STATIC POSTER MODE
+        ' -------------------------------
+        sub setupStaticPoster()
+            m.sprite.visible = false
+            m.poster.visible = true
+
+            m.poster.uri = m.top.uri
+
+            ' Wait for metadata so we can compute aspect ratio
+            m.poster.observeField("loadStatus", "onPosterLoaded")
+        end sub
+
+        sub onPosterLoaded()
+            meta = m.poster.getLoadStatus()
+
+            if meta.status = "ready" then
+                w = meta.width
+                h = meta.height
+
+                if w > 0 then
+                    aspect = h / w
+                    m.poster.width = m.top.targetWidth
+                    m.poster.height = m.top.targetWidth * aspect
+                end if
+            end if
+        end sub
+
+
+        ' -------------------------------
+        ' SPRITE SHEET MODE
+        ' -------------------------------
+        sub setupSpriteSheet()
+            m.poster.visible = false
+            m.sprite.visible = true
+
+            m.sprite.uri = m.top.uri
+            m.sprite.frameWidth = m.top.frameWidth
+            m.sprite.frameHeight = m.top.frameHeight
+            m.sprite.frameCount = m.top.frameCount
+
+            ' FPS → msPerFrame
+            if m.top.fps > 0 then
+                m.sprite.msPerFrame = 1000 / m.top.fps
+            else
+                m.sprite.msPerFrame = 100
+            end if
+
+            ' Auto-scale height based on frame aspect ratio
+            aspect = m.top.frameHeight / m.top.frameWidth
+            m.sprite.width = m.top.targetWidth
+            m.sprite.height = m.top.targetWidth * aspect
+
+            m.sprite.playing = true
+        end sub
+    ]]></script>
+
+</component>

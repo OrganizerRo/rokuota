@@ -32,11 +32,10 @@
           return
         end if
 
-        localUtcOffsetSeconds = currentLocalUtcOffsetSeconds()
         guide = createObject("roSGNode", "ContentNode")
         for each channel in channels
           if type(channel) = "roAssociativeArray"
-            appendChannel(guide, channel, localUtcOffsetSeconds)
+            appendChannel(guide, channel)
           end if
         end for
 
@@ -80,13 +79,17 @@
         return { body: body, error: "" }
       end function
 
-      sub appendChannel(parent as object, channel as object, localUtcOffsetSeconds as integer)
+      sub appendChannel(parent as object, channel as object)
         title = jsonString(channel, "title")
         if title = "" or not channel.doesExist("entries") or type(channel.entries) <> "roArray" then return
         if channel.entries.count() = 0 then return
 
+        isLooping = channelLoops(channel)
         item = createObject("roSGNode", "ContentNode")
-        item.addFields({ liveUrl: liveUrl(title) })
+        item.addFields({
+          liveUrl: liveUrl(title),
+          isLooping: isLooping
+        })
         item.title = title
         item.description = jsonString(channel, "description")
         item.HDPosterUrl = resolveUrl(jsonString(channel, "thumbnail"))
@@ -94,27 +97,33 @@
         for index = 0 to channel.entries.count() - 1
           entry = channel.entries[index]
           if type(entry) = "roAssociativeArray"
-            appendProgram(item, channel.entries, index, entry, localUtcOffsetSeconds)
+            appendProgram(item, channel.entries, index, entry, isLooping)
           end if
         end for
         if item.getChildCount() > 0 then parent.appendChild(item)
       end sub
 
-      sub appendProgram(parent as object, entries as object, index as integer, entry as object, localUtcOffsetSeconds as integer)
+      function channelLoops(channel as object) as boolean
+        if not channel.doesExist("entries") or type(channel.entries) <> "roArray" then return false
+        if channel.entries.count() = 0 then return false
+        lastEntry = channel.entries[channel.entries.count() - 1]
+        return jsonString(lastEntry, "nextProgram") <> ""
+      end function
+
+      sub appendProgram(parent as object, entries as object, index as integer, entry as object, isLooping as boolean)
         title = jsonString(entry, "title")
         if title = "" then title = "Program " + (index + 1).toStr()
-        startTime = jsonString(entry, "starttime")
-        durationSeconds = programDuration(entries, index, localUtcOffsetSeconds)
+        startTimeStr = jsonString(entry, "starttime")
+        startTimeSeconds = mapServerScheduleTimeToRokuSeconds(startTimeStr)
+        if startTimeSeconds < 0 then return
+        durationSeconds = programDuration(entries, index, startTimeSeconds, isLooping)
 
         program = createObject("roSGNode", "ContentNode")
         program.addFields({
-          programIndex: jsonInteger(entry, "index", index)
-          startTimeRaw: startTime
-          startTimeText: formatStartTime(startTime)
-          startTimeSeconds: timestampSeconds(startTime, localUtcOffsetSeconds)
+          programIndex: jsonInteger(entry, "index", index),
+          startTimeText: formatRokuScheduleTime(startTimeSeconds),
+          startTimeSeconds: startTimeSeconds,
           durationSeconds: durationSeconds
-          lastItemInPlaylist: jsonBoolean(entry, "LastItemInPlaylist", index = entries.count() - 1)
-          nextProgram: jsonString(entry, "nextProgram")
         })
         program.title = title
         program.description = jsonString(entry, "description")
@@ -123,38 +132,103 @@
         parent.appendChild(program)
       end sub
 
-      function programDuration(entries as object, index as integer, localUtcOffsetSeconds as integer) as integer
+      function programDuration(entries as object, index as integer, currentStartUtc as integer, isLooping as boolean) as integer
         current = entries[index]
-        currentTime = timestampSeconds(jsonString(current, "starttime"), localUtcOffsetSeconds)
-        if index + 1 < entries.count()
-          nextEntry = entries[index + 1]
-          nextTime = timestampSeconds(jsonString(nextEntry, "starttime"), localUtcOffsetSeconds)
-          if currentTime >= 0 and nextTime > currentTime then return nextTime - currentTime
-        end if
+        for nextIndex = index + 1 to entries.count() - 1
+          nextEntry = entries[nextIndex]
+          nextStartUtc = mapServerScheduleTimeToRokuSeconds(jsonString(nextEntry, "starttime"))
+          if currentStartUtc >= 0 and nextStartUtc > currentStartUtc then return nextStartUtc - currentStartUtc
+        end for
         remaining = jsonInteger(current, "remainingSeconds", 0)
+        if isLooping and remaining > 0
+          now = createObject("roDateTime")
+          now.mark()
+          elapsed = now.asSeconds() - currentStartUtc
+          if elapsed > 0 then return remaining + elapsed
+        end if
         if remaining > 0 then return remaining
         return 1800
       end function
 
-      function timestampSeconds(value as string, localUtcOffsetSeconds as integer) as integer
-        if value.len() < 19 then return -1
+      function mapServerScheduleTimeToRokuSeconds(value as string) as integer
+        localTime = parseLocalScheduleTime(value)
+        if localTime = invalid then return -1
+
+        localWallTimeSeconds = calendarTimestampSeconds(
+          localTime.year,
+          localTime.month,
+          localTime.day,
+          localTime.hour,
+          localTime.minute,
+          localTime.second
+        )
+        return localWallTimeToUtcSeconds(localWallTimeSeconds)
+      end function
+
+      function parseLocalScheduleTime(value as string) as object
+        value = value.trim()
+        if value.len() < 16 then return invalid
+        if value.mid(4, 1) <> "-" or value.mid(7, 1) <> "-" then return invalid
+        separator = value.mid(10, 1)
+        if separator <> "T" and separator <> " " then return invalid
+        if value.mid(13, 1) <> ":" then return invalid
+        if not isDigits(value.mid(0, 4)) or not isDigits(value.mid(5, 2)) or not isDigits(value.mid(8, 2)) then return invalid
+        if not isDigits(value.mid(11, 2)) or not isDigits(value.mid(14, 2)) then return invalid
+
+        second = 0
+        if value.len() > 16
+          if value.len() < 19 or value.mid(16, 1) <> ":" or not isDigits(value.mid(17, 2)) then return invalid
+          second = value.mid(17, 2).toInt()
+          if value.len() > 19
+            if value.mid(19, 1) <> "." or not isDigits(value.mid(20)) then return invalid
+          end if
+        end if
+
         year = value.mid(0, 4).toInt()
         month = value.mid(5, 2).toInt()
         day = value.mid(8, 2).toInt()
         hour = value.mid(11, 2).toInt()
         minute = value.mid(14, 2).toInt()
-        second = value.mid(17, 2).toInt()
-        if year < 1970 or month < 1 or month > 12 or day < 1 or day > 31 then return -1
+        if year < 1970 or month < 1 or month > 12 then return invalid
+        if day < 1 or day > daysInMonth(year, month) then return invalid
+        if hour > 23 or minute > 59 or second > 59 then return invalid
+        return { year: year, month: month, day: day, hour: hour, minute: minute, second: second }
+      end function
 
-        localWallTimeSeconds = calendarTimestampSeconds(
-          year,
-          month,
-          day,
-          hour,
-          minute,
-          second
+      function localWallTimeToUtcSeconds(localWallTimeSeconds as integer) as integer
+        matchedUtcSeconds = -1
+        ' Probe both sides of a possible DST transition, then choose the first
+        ' UTC occurrence if the local wall time is ambiguous.
+        for probeDay = -1 to 1
+          probeSeconds = localWallTimeSeconds + (probeDay * 86400)
+          utcSeconds = localWallTimeSeconds + localUtcOffsetSecondsAt(probeSeconds)
+          if localWallTimeSecondsAt(utcSeconds) = localWallTimeSeconds
+            if matchedUtcSeconds < 0 or utcSeconds < matchedUtcSeconds
+              matchedUtcSeconds = utcSeconds
+            end if
+          end if
+        end for
+
+        ' A local time skipped by a DST transition has no corresponding UTC instant.
+        return matchedUtcSeconds
+      end function
+
+      function localUtcOffsetSecondsAt(utcSeconds as integer) as integer
+        return utcSeconds - localWallTimeSecondsAt(utcSeconds)
+      end function
+
+      function localWallTimeSecondsAt(utcSeconds as integer) as integer
+        dt = createObject("roDateTime")
+        dt.fromSeconds(utcSeconds)
+        dt.toLocalTime()
+        return calendarTimestampSeconds(
+          dt.getYear(),
+          dt.getMonth(),
+          dt.getDayOfMonth(),
+          dt.getHours(),
+          dt.getMinutes(),
+          dt.getSeconds()
         )
-        return localWallTimeToUtcSeconds(localWallTimeSeconds, localUtcOffsetSeconds)
       end function
 
       function calendarTimestampSeconds(year as integer, month as integer, day as integer, hour as integer, minute as integer, second as integer) as integer
@@ -163,50 +237,43 @@
           days += 365
           if isLeapYear(currentYear) then days++
         end for
-        monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-        if isLeapYear(year) then monthDays[1] = 29
-        if month > 1
-          for currentMonth = 0 to month - 2
-            days += monthDays[currentMonth]
-          end for
-        end if
+        for currentMonth = 1 to month - 1
+          days += daysInMonth(year, currentMonth)
+        end for
         days += day - 1
         return days * 86400 + hour * 3600 + minute * 60 + second
       end function
 
-      function currentLocalUtcOffsetSeconds() as integer
-        current = createObject("roDateTime")
-        current.mark()
-        utcSeconds = current.asSeconds()
-        current.toLocalTime()
-        localWallTimeSeconds = calendarTimestampSeconds(
-          current.getYear(),
-          current.getMonth(),
-          current.getDayOfMonth(),
-          current.getHours(),
-          current.getMinutes(),
-          current.getSeconds()
-        )
-        return utcSeconds - localWallTimeSeconds
-      end function
-
-      function localWallTimeToUtcSeconds(localWallTimeSeconds as integer, localUtcOffsetSeconds as integer) as integer
-        ' The server emits local timestamps without an offset; map them onto Roku's UTC timeline.
-        return localWallTimeSeconds + localUtcOffsetSeconds
+      function daysInMonth(year as integer, month as integer) as integer
+        monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        if month = 2 and isLeapYear(year) then return 29
+        return monthDays[month - 1]
       end function
 
       function isLeapYear(year as integer) as boolean
         return (year mod 4 = 0 and year mod 100 <> 0) or year mod 400 = 0
       end function
 
-      function formatStartTime(value as string) as string
-        if value.len() < 16 then return ""
-        hour = value.mid(11, 2).toInt()
-        minuteText = value.mid(14, 2)
+      function isDigits(value as string) as boolean
+        if value.len() = 0 then return false
+        for index = 0 to value.len() - 1
+          if instr(1, "0123456789", value.mid(index, 1)) = 0 then return false
+        end for
+        return true
+      end function
+
+      function formatRokuScheduleTime(seconds as integer) as string
+        dt = createObject("roDateTime")
+        dt.fromSeconds(seconds)
+        dt.toLocalTime()
+        hour = dt.getHours()
+        minute = dt.getMinutes()
         suffix = "AM"
         if hour >= 12 then suffix = "PM"
         displayHour = hour mod 12
         if displayHour = 0 then displayHour = 12
+        minuteText = minute.toStr()
+        if minute < 10 then minuteText = "0" + minuteText
         return displayHour.toStr() + ":" + minuteText + " " + suffix
       end function
 
@@ -240,13 +307,6 @@
         if valueType = "Integer" or valueType = "LongInteger" or valueType = "Float" or valueType = "Double"
           return int(value[key])
         end if
-        return fallback
-      end function
-
-      function jsonBoolean(value as dynamic, key as string, fallback as boolean) as boolean
-        if type(value) <> "roAssociativeArray" or not value.doesExist(key) or value[key] = invalid then return fallback
-        valueType = type(value[key])
-        if valueType = "roBoolean" or valueType = "Boolean" then return value[key]
         return fallback
       end function
     ]]>
