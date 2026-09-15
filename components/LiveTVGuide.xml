@@ -7,12 +7,10 @@
     <field id="menuRequested" type="boolean" alwaysNotify="true" />
     <field id="fastForwardPressed" type="boolean" alwaysNotify="true" />
     <field id="fastRewindPressed" type="boolean" alwaysNotify="true" />
-    <field id="offAirVideoActive" type="boolean" value="false" />
   </interface>
 
   <children>
     <Timer id="nowPlayingTimer" duration="30" repeat="true" />
-    <Timer id="offAirVideoStartTimer" duration="0.5" repeat="false" />
 
     <!-- Viewport & Header Layout -->
     <Group id="stickyHeader">
@@ -23,15 +21,12 @@
         width="380"
         height="250"
         loadDisplayMode="scaleToFit" />
-      <Video
-        id="offAirVideo"
+      <LiveTVGuideStaticEffect
+        id="offAirStatic"
         translation="[80,20]"
         width="380"
         height="250"
-        visible="false"
-        loop="true"
-        mute="true"
-        enableTrickPlay="false" />
+        visible="false" />
       <Label
         id="detailTitle"
         translation="[500,20]"
@@ -93,9 +88,8 @@
         m.rows = m.top.findNode("rows")
         m.timeLabelsGroup = m.top.findNode("timeLabelsGroup")
         m.nowPlayingTimer = m.top.findNode("nowPlayingTimer")
-        m.offAirVideoStartTimer = m.top.findNode("offAirVideoStartTimer")
         m.detailPoster = m.top.findNode("detailPoster")
-        m.offAirVideo = m.top.findNode("offAirVideo")
+        m.offAirStatic = m.top.findNode("offAirStatic")
         m.detailTitle = m.top.findNode("detailTitle")
         m.detailTime = m.top.findNode("detailTime")
         m.detailDescription = m.top.findNode("detailDescription")
@@ -106,7 +100,6 @@
         m.top.observeField("visible", "onVisibilityChanged")
         m.top.observeField("focused", "onVisibilityChanged")
         m.nowPlayingTimer.observeField("fire", "onNowPlayingTimer")
-        m.offAirVideoStartTimer.observeField("fire", "startOffAirVideo")
 
         ' Screen Constants
         m.ROW_HEIGHT = 150
@@ -125,7 +118,7 @@
         m.topRowIndex = 0
         m.leftColIndex = 0
         m.detailDescriptionScrollOffset = 0
-        m.offAirVideoUrl = manifestString("off_air_video_url")
+        m.hasDetailPoster = false
 
         m.rowPool = []
         m.headerLabelPool = []
@@ -218,11 +211,7 @@
         else
           m.nowPlayingTimer.control = "stop"
         end if
-        if not m.top.visible
-          hideOffAirVideo()
-        else if m.top.offAirVideoActive
-          showOffAirVideo()
-        end if
+        updateFallbackPosterVisibility()
       end sub
 
       sub onFocusRequested()
@@ -405,77 +394,36 @@
         prog = findProgramAtTime(m.channelIndex, targetTime)
 
         if prog <> invalid
-          hideOffAirVideo()
           m.detailTitle.text = prog.title
           m.detailTime.text = prog.startTimeText + " (" + formatDuration(prog.durationSeconds) + ")"
           m.detailDescription.text = prog.description
           if prog.HDPosterUrl <> invalid and prog.HDPosterUrl <> ""
             m.detailPoster.uri = prog.HDPosterUrl
+            m.detailPoster.visible = true
+            m.hasDetailPoster = true
           else
             m.detailPoster.uri = ""
+            m.detailPoster.visible = false
+            m.hasDetailPoster = false
           end if
+          updateFallbackPosterVisibility()
         else
           m.detailTitle.text = "Off Air"
           m.detailTime.text = formatSlotTime(targetTime)
           m.detailDescription.text = "This channel is currently off air."
           m.detailPoster.uri = ""
-          showOffAirVideo()
+          m.detailPoster.visible = false
+          m.hasDetailPoster = false
+          updateFallbackPosterVisibility()
         end if
         
         m.detailDescriptionScrollOffset = 0
         m.detailDescription.translation = [0, 0]
       end sub
 
-      sub showOffAirVideo()
-        if m.offAirVideoUrl = "" then
-          m.offAirVideo.visible = false
-          return
-        end if
-        if not m.top.offAirVideoActive
-          m.top.offAirVideoActive = true
-        end if
-        if m.offAirVideo.content = invalid
-          content = createObject("roSGNode", "ContentNode")
-          content.url = m.offAirVideoUrl
-          content.streamFormat = streamFormat(m.offAirVideoUrl)
-          content.httpCertificatesFile = "common:/certs/ca-bundle.crt"
-          m.offAirVideo.content = content
-        end if
-        if not m.offAirVideo.visible
-          m.offAirVideoStartTimer.control = "start"
-        end if
+      sub updateFallbackPosterVisibility()
+        m.offAirStatic.visible = not m.hasDetailPoster and m.top.visible
       end sub
-
-      sub startOffAirVideo()
-        if not m.top.offAirVideoActive or not m.top.visible then return
-        m.offAirVideo.visible = true
-        if m.offAirVideo.state <> "playing" then m.offAirVideo.control = "play"
-      end sub
-
-      sub hideOffAirVideo()
-        if m.top.offAirVideoActive
-          m.offAirVideoStartTimer.control = "stop"
-          m.top.offAirVideoActive = false
-        end if
-        if m.offAirVideo.visible
-          m.offAirVideo.control = "stop"
-        end if
-        m.offAirVideo.visible = false
-      end sub
-
-      function manifestString(key as string) as string
-        appInfo = createObject("roAppInfo")
-        value = appInfo.getValue(key)
-        if value = invalid then return ""
-        return value.trim()
-      end function
-
-      function streamFormat(url as string) as string
-        lowered = LCase(url)
-        if instr(1, lowered, ".m3u8") > 0 then return "hls"
-        if instr(1, lowered, ".mpd") > 0 then return "dash"
-        return "mp4"
-      end function
 
       sub onNowPlayingTimer()
         calculateWindowStartTime()

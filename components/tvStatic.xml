@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="LiveTVGuideStaticEffect" extends="Group">
+
+    <script type="text/brightscript">
+        <![CDATA[
+        sub init()
+            m.staticLayer1 = m.top.findNode("staticLayer1")
+            m.staticLayer2 = m.top.findNode("staticLayer2")
+            m.bg = m.top.findNode("bg")
+            m.noiseViewport = m.top.findNode("noiseViewport")
+            m.scanlines = m.top.findNode("scanlines")
+            m.noiseTimer = m.top.findNode("noiseTimer")
+            m.noiseFrame = 0
+            m.scanlinePool = []
+
+            m.top.observeField("width", "onSizeChanged")
+            m.top.observeField("height", "onSizeChanged")
+            m.top.observeField("visible", "onVisibilityChanged")
+            m.noiseTimer.observeField("fire", "onNoiseTick")
+
+            buildScanlines()
+            onSizeChanged()
+            onVisibilityChanged()
+        end sub
+
+        sub buildScanlines()
+            for index = 0 to 63
+                line = createObject("roSGNode", "Rectangle")
+                line.height = 1
+                line.color = "0x020304FF"
+                m.scanlines.appendChild(line)
+                m.scanlinePool.push(line)
+            end for
+        end sub
+
+        sub onSizeChanged()
+            w = m.top.width
+            h = m.top.height
+
+            if w <= 0 then w = 512
+            if h <= 0 then h = 512
+
+            m.bg.width = w
+            m.bg.height = h
+            m.noiseViewport.clippingRect = [0, 0, w, h]
+            m.staticLayer1.width = w + 96
+            m.staticLayer2.width = w + 96
+            m.staticLayer1.height = h + 96
+            m.staticLayer2.height = h + 96
+
+            for index = 0 to m.scanlinePool.count() - 1
+                line = m.scanlinePool[index]
+                line.width = w
+                line.translation = [0, int((index * h) / m.scanlinePool.count())]
+            end for
+            renderNoiseFrame()
+        end sub
+
+        sub onVisibilityChanged()
+            if m.top.visible
+                renderNoiseFrame()
+                m.noiseTimer.control = "start"
+            else
+                m.noiseTimer.control = "stop"
+            end if
+        end sub
+
+        sub onNoiseTick()
+            m.noiseFrame = (m.noiseFrame + 1) mod 997
+            renderNoiseFrame()
+        end sub
+
+        sub renderNoiseFrame()
+            frame = m.noiseFrame
+            m.staticLayer1.translation = [-48 + ((frame * 37) mod 96), -48 + ((frame * 53) mod 96)]
+            m.staticLayer2.translation = [-48 + ((frame * 71) mod 96), -48 + ((frame * 29) mod 96)]
+            m.staticLayer1.opacity = 0.50 + (((frame * 17) mod 18) / 100.0)
+            m.staticLayer2.opacity = 0.28 + (((frame * 31) mod 20) / 100.0)
+
+            for index = 0 to m.scanlinePool.count() - 1
+                line = m.scanlinePool[index]
+                line.opacity = 0.03 + ((((frame + index) * 19) mod 15) / 100.0)
+            end for
+        end sub
+        ]]>
+    </script>
+
+    <interface>
+        <field id="width" type="float" value="512" />
+        <field id="height" type="float" value="512" />
+    </interface>
+
+    <children>
+        <Group id="noiseViewport" clippingRect="[0,0,512,512]">
+            <Rectangle id="bg" width="512" height="512" color="0x0F0F0FFF" />
+
+            <Poster
+                id="staticLayer1"
+                uri="pkg:/images/noise_tile.png"
+                loadDisplayMode="scaleToFill"
+                width="608"
+                height="608" />
+
+            <Poster
+                id="staticLayer2"
+                uri="pkg:/images/noise_tile.png"
+                loadDisplayMode="scaleToFill"
+                width="608"
+                height="608"
+                rotation="3.14159" />
+
+            <Group id="scanlines" />
+        </Group>
+        <Timer id="noiseTimer" duration="0.05" repeat="true" />
+    </children>
+</component>
