@@ -3,6 +3,7 @@
   <interface>
     <field id="content" type="node" />
     <field id="channelSelected" type="integer" alwaysNotify="true" />
+    <field id="windowRequested" type="assocarray" alwaysNotify="true" />
     <field id="focusRequested" type="boolean" alwaysNotify="true" />
     <field id="menuRequested" type="boolean" alwaysNotify="true" />
     <field id="fastForwardPressed" type="boolean" alwaysNotify="true" />
@@ -109,6 +110,7 @@
         ' The 1387px program viewport holds four complete 320px slots.
         m.VISIBLE_COLS = 4
         m.TOTAL_SLOTS = 48
+        m.WINDOW_CHANNELS = 6
         m.DETAIL_VIEWPORT_HEIGHT = 220
         m.DETAIL_SCROLL_STEP = 4
 
@@ -119,6 +121,8 @@
         m.leftColIndex = 0
         m.detailDescriptionScrollOffset = 0
         m.hasDetailPoster = false
+        m.windowChannelStart = 0
+        m.totalChannels = 0
 
         m.rowPool = []
         m.headerLabelPool = []
@@ -222,12 +226,18 @@
       end sub
 
       sub onContentChanged()
-        calculateWindowStartTime()
+        if m.top.content = invalid then return
+        isReset = m.top.content.reset = true
+        m.windowChannelStart = m.top.content.windowChannelStart
+        m.totalChannels = m.top.content.totalChannels
+        m.windowStartSeconds = m.top.content.windowStartSeconds
         buildFastProgramIndex()
-        m.channelIndex = 0
-        m.selectedSlotIndex = 0
-        m.topRowIndex = 0
-        m.leftColIndex = 0
+        if isReset
+          m.channelIndex = 0
+          m.selectedSlotIndex = 0
+          m.topRowIndex = 0
+          m.leftColIndex = 0
+        end if
         renderView()
       end sub
 
@@ -275,7 +285,7 @@
 
       sub renderView()
         if m.top.content = invalid then return
-        totalChannels = m.top.content.getChildCount()
+        if m.totalChannels <= 0 then return
 
         if m.channelIndex < m.topRowIndex
           m.topRowIndex = m.channelIndex
@@ -304,12 +314,12 @@
           chIdx = m.topRowIndex + r
           rowRec = m.rowPool[r]
 
-          if chIdx < totalChannels
+          channel = channelForIndex(chIdx)
+          if channel <> invalid
             rowRec.rowGroup.visible = true
             rowRec.rowGroup.translation = [0, r * m.ROW_HEIGHT]
-            chNode = m.top.content.getChild(chIdx)
-            if chNode <> invalid and chNode.title <> invalid
-              rowRec.titleLabel.text = chNode.title
+            if channel.title <> invalid
+              rowRec.titleLabel.text = channel.title
             end if
 
             for c = 0 to m.VISIBLE_COLS - 1
@@ -346,16 +356,15 @@
       end sub
 
       function findProgramAtTime(channelIdx as integer, targetTime as integer) as object
-        scheduleTime = loopedScheduleTime(channelIdx, targetTime)
-        if scheduleTime < 0 then return invalid
-
-        key = channelIdx.toStr() + "_" + scheduleTime.toStr()
+        localIndex = channelIdx - m.windowChannelStart
+        if localIndex < 0 then return invalid
+        key = localIndex.toStr() + "_" + targetTime.toStr()
         if m.programIndex.doesExist(key)
           prog = m.programIndex[key]
           if prog <> invalid and prog.startTimeSeconds <> invalid and prog.durationSeconds <> invalid
             duration = prog.durationSeconds
             if duration <= 0 then duration = 1800
-            if scheduleTime >= prog.startTimeSeconds and scheduleTime < prog.startTimeSeconds + duration
+            if targetTime >= prog.startTimeSeconds and targetTime < prog.startTimeSeconds + duration
               return prog
             end if
           end if
@@ -363,31 +372,16 @@
         return invalid
       end function
 
-      function loopedScheduleTime(channelIdx as integer, targetTime as integer) as integer
-        if m.top.content = invalid then return -1
-        channel = m.top.content.getChild(channelIdx)
-        if channel = invalid or channel.isLooping <> true then return targetTime
-        if channel.getChildCount() = 0 then return -1
-
-        firstProgram = channel.getChild(0)
-        if firstProgram = invalid or firstProgram.startTimeSeconds = invalid then return -1
-        cycleDuration = 0
-        for programIdx = 0 to channel.getChildCount() - 1
-          program = channel.getChild(programIdx)
-          if program = invalid then return -1
-          duration = program.durationSeconds
-          if duration <= 0 then duration = 1800
-          cycleDuration += duration
-        end for
-        if cycleDuration <= 0 then return -1
-        if targetTime < firstProgram.startTimeSeconds then return targetTime
-
-        return firstProgram.startTimeSeconds + ((targetTime - firstProgram.startTimeSeconds) mod cycleDuration)
+      function channelForIndex(channelIdx as integer) as object
+        if m.top.content = invalid then return invalid
+        localIndex = channelIdx - m.windowChannelStart
+        if localIndex < 0 or localIndex >= m.top.content.getChildCount() then return invalid
+        return m.top.content.getChild(localIndex)
       end function
 
       sub updateDetails()
         if m.top.content = invalid then return
-        chNode = m.top.content.getChild(m.channelIndex)
+        chNode = channelForIndex(m.channelIndex)
         if chNode = invalid then return
 
         targetTime = m.windowStartSeconds + (m.selectedSlotIndex * 1800)
@@ -426,8 +420,25 @@
       end sub
 
       sub onNowPlayingTimer()
+        previousWindowStart = m.windowStartSeconds
         calculateWindowStartTime()
-        renderView()
+        if m.windowStartSeconds <> previousWindowStart
+          requestWindow(m.channelIndex, false)
+        else
+          renderView()
+        end if
+      end sub
+
+      sub requestWindow(channelIndex as integer, reset as boolean)
+        channelStart = channelIndex - (m.VISIBLE_ROWS - 1)
+        if channelStart < 0 then channelStart = 0
+        m.top.windowRequested = {
+          channelStart: channelStart,
+          channelCount: m.WINDOW_CHANNELS,
+          windowStartSeconds: m.windowStartSeconds,
+          slotCount: m.TOTAL_SLOTS,
+          reset: reset
+        }
       end sub
 
       function scrollDetailDescription(direction as integer) as boolean
@@ -461,13 +472,21 @@
         else if key = "up"
           if m.channelIndex > 0
             m.channelIndex--
-            renderView()
+            if channelForIndex(m.channelIndex) = invalid
+              requestWindow(m.channelIndex, false)
+            else
+              renderView()
+            end if
           end if
           return true
         else if key = "down"
-          if m.channelIndex + 1 < m.top.content.getChildCount()
+          if m.channelIndex + 1 < m.totalChannels
             m.channelIndex++
-            renderView()
+            if channelForIndex(m.channelIndex) = invalid
+              requestWindow(m.channelIndex, false)
+            else
+              renderView()
+            end if
           end if
           return true
         else if key = "right"

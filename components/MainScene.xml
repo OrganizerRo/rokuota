@@ -70,6 +70,7 @@
         m.catalogTask.observeField("errorMessage", "onCatalogError")
         m.liveGuideTask.observeField("guide", "onLiveGuideLoaded")
         m.liveGuideTask.observeField("errorMessage", "onLiveGuideError")
+        m.liveTVGuide.observeField("windowRequested", "onLiveGuideWindowRequested")
         m.playlistTask.observeField("playlist", "onPlaylistLoaded")
         m.playlistTask.observeField("errorMessage", "onPlaylistError")
         m.playlistLoadWatchdog.observeField("fire", "onPlaylistLoadTimeout")
@@ -95,6 +96,8 @@
           end if
         end if
         m.defaultChannelPlayback = false
+        m.liveGuideTaskStarted = false
+        m.liveGuideReloadRequestId = 0
         catalogTimeout = 0
         catalogTimeoutValue = appInfo.getValue("channel_catalog_timeout_seconds")
         if catalogTimeoutValue <> invalid and catalogTimeoutValue <> ""
@@ -192,8 +195,9 @@
       sub onLiveGuideLoaded(event as object)
         guide = event.getData()
         if guide = invalid then return
-        closeLoading()
         m.liveTVGuide.content = guide
+        if guide.reset <> true then return
+        closeLoading()
         m.activeGuide = "liveTV"
         m.errorReturnTarget = ""
         showGuide("liveTV")
@@ -203,6 +207,11 @@
       sub onLiveGuideError(event as object)
         message = event.getData()
         if message <> "" then showApiError(message)
+      end sub
+
+      sub onLiveGuideWindowRequested(event as object)
+        request = event.getData()
+        if type(request) = "roAssociativeArray" then m.liveGuideTask.windowRequest = request
       end sub
 
       sub onChannelSelected(event as object)
@@ -219,8 +228,9 @@
         m.errorReturnTarget = ""
         if m.liveTVGuide.content = invalid then return
         index = event.getData()
-        if index < 0 or index >= m.liveTVGuide.content.getChildCount() then return
-        channel = m.liveTVGuide.content.getChild(index)
+        windowIndex = index - m.liveTVGuide.content.windowChannelStart
+        if windowIndex < 0 or windowIndex >= m.liveTVGuide.content.getChildCount() then return
+        channel = m.liveTVGuide.content.getChild(windowIndex)
         if channel = invalid or channel.liveUrl = ""
           showError("The selected Live TV channel has no playback URL.")
           return
@@ -336,6 +346,7 @@
       end sub
 
       function livePlaylistSize(channel as object) as integer
+        if channel.playlistSize <> invalid and channel.playlistSize > 0 then return channel.playlistSize
         highestIndex = -1
         for index = 0 to channel.getChildCount() - 1
           program = channel.getChild(index)
@@ -599,9 +610,14 @@
           return
         end if
         showLoading("Loading Live TV guide...")
-        m.liveGuideTask.control = "stop"
         m.liveGuideTask.uri = uri
-        m.liveGuideTask.control = "run"
+        if not m.liveGuideTaskStarted
+          m.liveGuideTaskStarted = true
+          m.liveGuideTask.control = "run"
+        else
+          m.liveGuideReloadRequestId++
+          m.liveGuideTask.reloadRequestId = m.liveGuideReloadRequestId
+        end if
       end sub
 
       function liveGuideUrl(serverUrl as string) as string

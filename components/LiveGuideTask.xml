@@ -3,6 +3,8 @@
   <interface>
     <field id="uri" type="string" />
     <field id="timeoutSeconds" type="integer" value="10" />
+    <field id="windowRequest" type="assocarray" alwaysNotify="true" />
+    <field id="reloadRequestId" type="integer" alwaysNotify="true" />
     <field id="guide" type="node" />
     <field id="errorMessage" type="string" />
   </interface>
@@ -10,41 +12,61 @@
   <script type="text/brightscript">
     <![CDATA[
       sub init()
-        m.top.functionName = "loadGuide"
+        m.port = createObject("roMessagePort")
+        m.top.observeField("windowRequest", m.port)
+        m.top.observeField("reloadRequestId", m.port)
+        m.top.functionName = "serveGuide"
       end sub
 
-      sub loadGuide()
+      sub serveGuide()
+        if loadGuideData() then publishWindow(defaultWindowRequest())
+
+        while true
+          message = wait(0, m.port)
+          if type(message) = "roSGNodeEvent"
+            field = message.getField()
+            if field = "windowRequest"
+              publishWindow(message.getData())
+            else if field = "reloadRequestId"
+              if loadGuideData() then publishWindow(defaultWindowRequest())
+            end if
+          end if
+        end while
+      end sub
+
+      function loadGuideData() as boolean
         m.top.errorMessage = ""
         if m.top.uri = ""
           m.top.errorMessage = "The Live TV guide URL is not configured."
-          return
+          return false
         end if
 
         response = fetchText(m.top.uri)
         if response.error <> ""
           m.top.errorMessage = response.error
-          return
+          return false
         end if
 
         channels = ParseJson(response.body)
         if type(channels) <> "roArray"
           m.top.errorMessage = "The Live TV guide API must return a JSON array."
-          return
+          return false
         end if
 
-        guide = createObject("roSGNode", "ContentNode")
+        m.channels = []
         for each channel in channels
           if type(channel) = "roAssociativeArray"
-            appendChannel(guide, channel)
+            normalized = normalizeChannel(channel)
+            if normalized <> invalid then m.channels.push(normalized)
           end if
         end for
 
-        if guide.getChildCount() = 0
+        if m.channels.count() = 0
           m.top.errorMessage = "The Live TV guide returned no usable channels."
-          return
+          return false
         end if
-        m.top.guide = guide
-      end sub
+        return true
+      end function
 
       function fetchText(uri as string) as object
         transfer = createObject("roUrlTransfer")
@@ -79,29 +101,45 @@
         return { body: body, error: "" }
       end function
 
-      sub appendChannel(parent as object, channel as object)
+      function normalizeChannel(channel as object) as dynamic
         title = jsonString(channel, "title")
-        if title = "" or not channel.doesExist("entries") or type(channel.entries) <> "roArray" then return
-        if channel.entries.count() = 0 then return
+        if title = "" or not channel.doesExist("entries") or type(channel.entries) <> "roArray" then return invalid
+        if channel.entries.count() = 0 then return invalid
 
         isLooping = channelLoops(channel)
-        item = createObject("roSGNode", "ContentNode")
-        item.addFields({
-          liveUrl: liveUrl(title),
-          isLooping: isLooping
-        })
-        item.title = title
-        item.description = jsonString(channel, "description")
-        item.HDPosterUrl = resolveUrl(jsonString(channel, "thumbnail"))
-
+        programs = []
         for index = 0 to channel.entries.count() - 1
           entry = channel.entries[index]
           if type(entry) = "roAssociativeArray"
-            appendProgram(item, channel.entries, index, entry, isLooping)
+            startTimeSeconds = mapServerScheduleTimeToRokuSeconds(jsonString(entry, "starttime"))
+            if startTimeSeconds >= 0
+              title = jsonString(entry, "title")
+              if title = "" then title = "Program " + (index + 1).toStr()
+              programs.push({
+                programIndex: jsonInteger(entry, "index", index),
+                title: title,
+                description: jsonString(entry, "description"),
+                url: jsonString(entry, "program"),
+                thumbnail: resolveUrl(jsonString(entry, "thumbnail")),
+                startTimeSeconds: startTimeSeconds,
+                remainingSeconds: jsonInteger(entry, "remainingSeconds", 0)
+              })
+            end if
           end if
         end for
-        if item.getChildCount() > 0 then parent.appendChild(item)
-      end sub
+        if programs.count() = 0 then return invalid
+
+        assignProgramDurations(programs, isLooping)
+        return {
+          title: jsonString(channel, "title"),
+          description: jsonString(channel, "description"),
+          thumbnail: resolveUrl(jsonString(channel, "thumbnail")),
+          liveUrl: liveUrl(jsonString(channel, "title")),
+          isLooping: isLooping,
+          programs: programs,
+          cycleDuration: programCycleDuration(programs, isLooping)
+        }
+      end function
 
       function channelLoops(channel as object) as boolean
         if not channel.doesExist("entries") or type(channel.entries) <> "roArray" then return false
@@ -110,45 +148,157 @@
         return jsonString(lastEntry, "nextProgram") <> ""
       end function
 
-      sub appendProgram(parent as object, entries as object, index as integer, entry as object, isLooping as boolean)
-        title = jsonString(entry, "title")
-        if title = "" then title = "Program " + (index + 1).toStr()
-        startTimeStr = jsonString(entry, "starttime")
-        startTimeSeconds = mapServerScheduleTimeToRokuSeconds(startTimeStr)
-        if startTimeSeconds < 0 then return
-        durationSeconds = programDuration(entries, index, startTimeSeconds, isLooping)
+      sub assignProgramDurations(programs as object, isLooping as boolean)
+        nextGreater = {}
+        stack = []
+        for index = programs.count() - 1 to 0 step -1
+          while stack.count() > 0 and programs[stack[stack.count() - 1]].startTimeSeconds <= programs[index].startTimeSeconds
+            stack.pop()
+          end while
+          nextIndex = -1
+          if stack.count() > 0 then nextIndex = stack[stack.count() - 1]
+          nextGreater[index.toStr()] = nextIndex
+          stack.push(index)
+        end for
 
-        program = createObject("roSGNode", "ContentNode")
-        program.addFields({
-          programIndex: jsonInteger(entry, "index", index),
-          startTimeText: formatRokuScheduleTime(startTimeSeconds),
-          startTimeSeconds: startTimeSeconds,
-          durationSeconds: durationSeconds
-        })
-        program.title = title
-        program.description = jsonString(entry, "description")
-        program.url = jsonString(entry, "program")
-        program.HDPosterUrl = resolveUrl(jsonString(entry, "thumbnail"))
-        parent.appendChild(program)
+        now = createObject("roDateTime")
+        now.mark()
+        for index = 0 to programs.count() - 1
+          duration = 0
+          if nextGreater[index.toStr()] >= 0
+            duration = programs[nextGreater[index.toStr()]].startTimeSeconds - programs[index].startTimeSeconds
+          else
+            duration = programs[index].remainingSeconds
+            if isLooping and duration > 0
+              elapsed = now.asSeconds() - programs[index].startTimeSeconds
+              if elapsed > 0 then duration += elapsed
+            end if
+          end if
+          if duration <= 0 then duration = 1800
+          programs[index].durationSeconds = duration
+        end for
       end sub
 
-      function programDuration(entries as object, index as integer, currentStartUtc as integer, isLooping as boolean) as integer
-        current = entries[index]
-        for nextIndex = index + 1 to entries.count() - 1
-          nextEntry = entries[nextIndex]
-          nextStartUtc = mapServerScheduleTimeToRokuSeconds(jsonString(nextEntry, "starttime"))
-          if currentStartUtc >= 0 and nextStartUtc > currentStartUtc then return nextStartUtc - currentStartUtc
+      function programCycleDuration(programs as object, isLooping as boolean) as integer
+        if not isLooping then return 0
+        duration = 0
+        for each program in programs
+          duration += program.durationSeconds
         end for
-        remaining = jsonInteger(current, "remainingSeconds", 0)
-        if isLooping and remaining > 0
-          now = createObject("roDateTime")
-          now.mark()
-          elapsed = now.asSeconds() - currentStartUtc
-          if elapsed > 0 then return remaining + elapsed
-        end if
-        if remaining > 0 then return remaining
-        return 1800
+        return duration
       end function
+
+      function defaultWindowRequest() as object
+        return {
+          channelStart: 0,
+          channelCount: 6,
+          windowStartSeconds: currentWindowStartSeconds(),
+          slotCount: 48,
+          reset: true
+        }
+      end function
+
+      sub publishWindow(request as dynamic)
+        if type(request) <> "roAssociativeArray" or m.channels = invalid then return
+
+        channelStart = jsonInteger(request, "channelStart", 0)
+        channelCount = jsonInteger(request, "channelCount", 6)
+        windowStartSeconds = jsonInteger(request, "windowStartSeconds", 0)
+        slotCount = jsonInteger(request, "slotCount", 48)
+        if channelStart < 0 then channelStart = 0
+        if channelCount < 1 then channelCount = 1
+        if channelCount > 8 then channelCount = 8
+        if windowStartSeconds <= 0
+          windowStartSeconds = currentWindowStartSeconds()
+        end if
+        if slotCount < 1 then slotCount = 1
+        if slotCount > 48 then slotCount = 48
+        windowEndSeconds = windowStartSeconds + (slotCount * 1800)
+
+        window = createObject("roSGNode", "ContentNode")
+        window.addFields({
+          windowChannelStart: channelStart,
+          totalChannels: m.channels.count(),
+          windowStartSeconds: windowStartSeconds,
+          slotCount: slotCount,
+          reset: request.reset = true
+        })
+        channelEnd = channelStart + channelCount
+        if channelEnd > m.channels.count() then channelEnd = m.channels.count()
+        for channelIndex = channelStart to channelEnd - 1
+          appendWindowChannel(window, m.channels[channelIndex], windowStartSeconds, windowEndSeconds)
+        end for
+        m.top.guide = window
+      end sub
+
+      function currentWindowStartSeconds() as integer
+        dt = createObject("roDateTime")
+        dt.mark()
+        utcSeconds = dt.asSeconds()
+        dt.toLocalTime()
+        secondsIntoBlock = (dt.getMinutes() * 60 + dt.getSeconds()) mod 1800
+        return utcSeconds - secondsIntoBlock
+      end function
+
+      sub appendWindowChannel(parent as object, channel as object, windowStartSeconds as integer, windowEndSeconds as integer)
+        item = parent.createChild("ContentNode")
+        item.addFields({
+          liveUrl: channel.liveUrl,
+          playlistSize: channel.programs.count()
+        })
+        item.title = channel.title
+        item.description = channel.description
+        item.HDPosterUrl = channel.thumbnail
+
+        if channel.isLooping and channel.cycleDuration > 0
+          appendLoopingWindowPrograms(item, channel, windowStartSeconds, windowEndSeconds)
+        else
+          for each program in channel.programs
+            if program.startTimeSeconds + program.durationSeconds > windowStartSeconds and program.startTimeSeconds < windowEndSeconds
+              appendWindowProgram(item, program, program.startTimeSeconds)
+            end if
+          end for
+        end if
+      end sub
+
+      sub appendLoopingWindowPrograms(parent as object, channel as object, windowStartSeconds as integer, windowEndSeconds as integer)
+        firstStart = channel.programs[0].startTimeSeconds
+        cycleStart = firstStart
+        if windowStartSeconds > firstStart
+          cycleStart += int((windowStartSeconds - firstStart) / channel.cycleDuration) * channel.cycleDuration
+          while cycleStart + channel.cycleDuration <= windowStartSeconds
+            cycleStart += channel.cycleDuration
+          end while
+        end if
+        while cycleStart > windowStartSeconds
+          cycleStart -= channel.cycleDuration
+        end while
+
+        while cycleStart < windowEndSeconds
+          occurrenceStart = cycleStart
+          for each program in channel.programs
+            if occurrenceStart + program.durationSeconds > windowStartSeconds and occurrenceStart < windowEndSeconds
+              appendWindowProgram(parent, program, occurrenceStart)
+            end if
+            occurrenceStart += program.durationSeconds
+          end for
+          cycleStart += channel.cycleDuration
+        end while
+      end sub
+
+      sub appendWindowProgram(parent as object, source as object, occurrenceStart as integer)
+        program = parent.createChild("ContentNode")
+        program.addFields({
+          programIndex: source.programIndex,
+          startTimeText: formatRokuScheduleTime(occurrenceStart),
+          startTimeSeconds: occurrenceStart,
+          durationSeconds: source.durationSeconds
+        })
+        program.title = source.title
+        program.description = source.description
+        program.url = source.url
+        program.HDPosterUrl = source.thumbnail
+      end sub
 
       function mapServerScheduleTimeToRokuSeconds(value as string) as integer
         localTime = parseLocalScheduleTime(value)

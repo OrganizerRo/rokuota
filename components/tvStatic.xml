@@ -6,6 +6,8 @@
         sub init()
             m.staticLayer1 = m.top.findNode("staticLayer1")
             m.staticLayer2 = m.top.findNode("staticLayer2")
+            m.staticTexture1 = m.top.findNode("staticTexture1")
+            m.staticTexture2 = m.top.findNode("staticTexture2")
             m.bg = m.top.findNode("bg")
             m.noiseViewport = m.top.findNode("noiseViewport")
             m.scanlines = m.top.findNode("scanlines")
@@ -43,10 +45,12 @@
             m.bg.width = w
             m.bg.height = h
             m.noiseViewport.clippingRect = [0, 0, w, h]
-            m.staticLayer1.width = w + 96
-            m.staticLayer2.width = w + 96
-            m.staticLayer1.height = h + 96
-            m.staticLayer2.height = h + 96
+            m.staticLayer1.clippingRect = [0, 0, w, h]
+            m.staticLayer2.clippingRect = [0, 0, w, h]
+            m.staticTexture1.width = w + 96
+            m.staticTexture2.width = w + 96
+            m.staticTexture1.height = h + 96
+            m.staticTexture2.height = h + 96
 
             for index = 0 to m.scanlinePool.count() - 1
                 line = m.scanlinePool[index]
@@ -72,8 +76,8 @@
 
         sub renderNoiseFrame()
             frame = m.noiseFrame
-            m.staticLayer1.translation = [-48 + ((frame * 37) mod 96), -48 + ((frame * 53) mod 96)]
-            m.staticLayer2.translation = [-48 + ((frame * 71) mod 96), -48 + ((frame * 29) mod 96)]
+            m.staticTexture1.translation = [-((frame * 37) mod 96), -((frame * 53) mod 96)]
+            m.staticTexture2.translation = [-((frame * 71) mod 96), -((frame * 29) mod 96)]
             m.staticLayer1.opacity = 0.50 + (((frame * 17) mod 18) / 100.0)
             m.staticLayer2.opacity = 0.28 + (((frame * 31) mod 20) / 100.0)
 
@@ -94,20 +98,28 @@
         <Group id="noiseViewport" clippingRect="[0,0,512,512]">
             <Rectangle id="bg" width="512" height="512" color="0x0F0F0FFF" />
 
-            <Poster
+            <Group
                 id="staticLayer1"
-                uri="pkg:/images/noise_tile.png"
-                loadDisplayMode="scaleToFill"
-                width="608"
-                height="608" />
+                clippingRect="[0,0,512,512]">
+                <Poster
+                    id="staticTexture1"
+                    uri="pkg:/images/noise_tile.png"
+                    loadDisplayMode="scaleToFill"
+                    width="608"
+                    height="608" />
+            </Group>
 
-            <Poster
+            <Group
                 id="staticLayer2"
-                uri="pkg:/images/noise_tile.png"
-                loadDisplayMode="scaleToFill"
-                width="608"
-                height="608"
-                rotation="3.14159" />
+                clippingRect="[0,0,512,512]">
+                <Poster
+                    id="staticTexture2"
+                    uri="pkg:/images/noise_tile.png"
+                    loadDisplayMode="scaleToFill"
+                    width="608"
+                    height="608"
+                    rotation="3.14159" />
+            </Group>
 
             <Group id="scanlines" />
         </Group>
