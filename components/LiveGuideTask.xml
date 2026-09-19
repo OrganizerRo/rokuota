@@ -4,7 +4,6 @@
     <field id="uri" type="string" />
     <field id="timeoutSeconds" type="integer" value="10" />
     <field id="windowRequest" type="assocarray" alwaysNotify="true" />
-    <field id="reloadRequestId" type="integer" alwaysNotify="true" />
     <field id="guide" type="node" />
     <field id="errorMessage" type="string" />
   </interface>
@@ -12,26 +11,12 @@
   <script type="text/brightscript">
     <![CDATA[
       sub init()
-        m.port = createObject("roMessagePort")
-        m.top.observeField("windowRequest", m.port)
-        m.top.observeField("reloadRequestId", m.port)
         m.top.functionName = "serveGuide"
       end sub
 
       sub serveGuide()
-        if loadGuideData() then publishWindow(defaultWindowRequest())
-
-        while true
-          message = wait(0, m.port)
-          if type(message) = "roSGNodeEvent"
-            field = message.getField()
-            if field = "windowRequest"
-              publishWindow(message.getData())
-            else if field = "reloadRequestId"
-              if loadGuideData() then publishWindow(defaultWindowRequest())
-            end if
-          end if
-        end while
+        if not loadGuideData() then return
+        publishWindow()
       end sub
 
       function loadGuideData() as boolean
@@ -188,44 +173,21 @@
         return duration
       end function
 
-      function defaultWindowRequest() as object
-        return {
-          channelStart: 0,
-          channelCount: 6,
-          windowStartSeconds: currentWindowStartSeconds(),
-          slotCount: 48,
-          reset: true
-        }
-      end function
+      sub publishWindow()
+        if m.channels = invalid then return
 
-      sub publishWindow(request as dynamic)
-        if type(request) <> "roAssociativeArray" or m.channels = invalid then return
-
-        channelStart = jsonInteger(request, "channelStart", 0)
-        channelCount = jsonInteger(request, "channelCount", 6)
-        windowStartSeconds = jsonInteger(request, "windowStartSeconds", 0)
-        slotCount = jsonInteger(request, "slotCount", 48)
-        if channelStart < 0 then channelStart = 0
-        if channelCount < 1 then channelCount = 1
-        if channelCount > 8 then channelCount = 8
-        if windowStartSeconds <= 0
-          windowStartSeconds = currentWindowStartSeconds()
-        end if
-        if slotCount < 1 then slotCount = 1
-        if slotCount > 48 then slotCount = 48
-        windowEndSeconds = windowStartSeconds + (slotCount * 1800)
+        windowStartSeconds = currentWindowStartSeconds()
+        windowEndSeconds = windowStartSeconds + (48 * 1800)
 
         window = createObject("roSGNode", "ContentNode")
         window.addFields({
-          windowChannelStart: channelStart,
+          windowChannelStart: 0,
           totalChannels: m.channels.count(),
           windowStartSeconds: windowStartSeconds,
-          slotCount: slotCount,
-          reset: request.reset = true
+          slotCount: 48,
+          reset: true
         })
-        channelEnd = channelStart + channelCount
-        if channelEnd > m.channels.count() then channelEnd = m.channels.count()
-        for channelIndex = channelStart to channelEnd - 1
+        for channelIndex = 0 to m.channels.count() - 1
           appendWindowChannel(window, m.channels[channelIndex], windowStartSeconds, windowEndSeconds)
         end for
         m.top.guide = window

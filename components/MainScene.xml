@@ -24,7 +24,6 @@
     <SettingsView id="settingsView" visible="false" />
     <CapabilityValidator id="capabilityValidator" />
     <ChannelCatalogTask id="catalogTask" />
-    <LiveGuideTask id="liveGuideTask" />
     <PlaylistTask id="playlistTask" />
     <Timer id="playlistLoadWatchdog" duration="20" repeat="false" />
   </children>
@@ -42,7 +41,7 @@
         m.settingsView = m.top.findNode("settingsView")
         m.capabilityValidator = m.top.findNode("capabilityValidator")
         m.catalogTask = m.top.findNode("catalogTask")
-        m.liveGuideTask = m.top.findNode("liveGuideTask")
+        m.liveGuideTask = invalid
         m.playlistTask = m.top.findNode("playlistTask")
         m.playlistLoadWatchdog = m.top.findNode("playlistLoadWatchdog")
 
@@ -68,8 +67,6 @@
         m.capabilityValidator.observeField("complete", "onCapabilitiesValidated")
         m.catalogTask.observeField("catalog", "onCatalogLoaded")
         m.catalogTask.observeField("errorMessage", "onCatalogError")
-        m.liveGuideTask.observeField("guide", "onLiveGuideLoaded")
-        m.liveGuideTask.observeField("errorMessage", "onLiveGuideError")
         m.liveTVGuide.observeField("windowRequested", "onLiveGuideWindowRequested")
         m.playlistTask.observeField("playlist", "onPlaylistLoaded")
         m.playlistTask.observeField("errorMessage", "onPlaylistError")
@@ -96,8 +93,6 @@
           end if
         end if
         m.defaultChannelPlayback = false
-        m.liveGuideTaskStarted = false
-        m.liveGuideReloadRequestId = 0
         catalogTimeout = 0
         catalogTimeoutValue = appInfo.getValue("channel_catalog_timeout_seconds")
         if catalogTimeoutValue <> invalid and catalogTimeoutValue <> ""
@@ -211,7 +206,8 @@
 
       sub onLiveGuideWindowRequested(event as object)
         request = event.getData()
-        if type(request) = "roAssociativeArray" then m.liveGuideTask.windowRequest = request
+        if type(request) <> "roAssociativeArray" then return
+        startLiveGuideTask(m.liveGuideTask.uri, request)
       end sub
 
       sub onChannelSelected(event as object)
@@ -610,14 +606,25 @@
           return
         end if
         showLoading("Loading Live TV guide...")
-        m.liveGuideTask.uri = uri
-        if not m.liveGuideTaskStarted
-          m.liveGuideTaskStarted = true
-          m.liveGuideTask.control = "run"
-        else
-          m.liveGuideReloadRequestId++
-          m.liveGuideTask.reloadRequestId = m.liveGuideReloadRequestId
+        startLiveGuideTask(uri, invalid)
+      end sub
+
+      sub startLiveGuideTask(uri as string, windowRequest as dynamic)
+        if m.liveGuideTask <> invalid
+          m.liveGuideTask.control = "stop"
+          m.top.removeChild(m.liveGuideTask)
         end if
+
+        task = createObject("roSGNode", "LiveGuideTask")
+        task.uri = uri
+        if type(windowRequest) = "roAssociativeArray"
+          task.windowRequest = windowRequest
+        end if
+        task.observeField("guide", "onLiveGuideLoaded")
+        task.observeField("errorMessage", "onLiveGuideError")
+        m.top.appendChild(task)
+        m.liveGuideTask = task
+        task.control = "run"
       end sub
 
       function liveGuideUrl(serverUrl as string) as string
