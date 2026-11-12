@@ -176,18 +176,39 @@
       sub publishWindow()
         if m.channels = invalid then return
 
+        windowRequest = m.top.windowRequest
+        channelStart = 0
+        channelCount = m.channels.count()
+        slotCount = 48
+        reset = true
         windowStartSeconds = currentWindowStartSeconds()
-        windowEndSeconds = windowStartSeconds + (48 * 1800)
+        if type(windowRequest) = "roAssociativeArray"
+          if windowRequest.doesExist("channelStart") then channelStart = windowRequest.channelStart
+          if windowRequest.doesExist("channelCount") then channelCount = windowRequest.channelCount
+          if windowRequest.doesExist("slotCount") then slotCount = windowRequest.slotCount
+          if windowRequest.doesExist("windowStartSeconds") then windowStartSeconds = windowRequest.windowStartSeconds
+          if windowRequest.doesExist("reset") then reset = windowRequest.reset
+        end if
+
+        if channelStart < 0 then channelStart = 0
+        if channelStart >= m.channels.count() then channelStart = m.channels.count() - 1
+        if channelCount < 1 then channelCount = 1
+        if channelStart + channelCount > m.channels.count()
+          channelCount = m.channels.count() - channelStart
+        end if
+        if slotCount < 1 then slotCount = 48
+
+        windowEndSeconds = windowStartSeconds + (slotCount * 1800)
 
         window = createObject("roSGNode", "ContentNode")
         window.addFields({
-          windowChannelStart: 0,
+          windowChannelStart: channelStart,
           totalChannels: m.channels.count(),
           windowStartSeconds: windowStartSeconds,
-          slotCount: 48,
-          reset: true
+          slotCount: slotCount,
+          reset: reset
         })
-        for channelIndex = 0 to m.channels.count() - 1
+        for channelIndex = channelStart to channelStart + channelCount - 1
           appendWindowChannel(window, m.channels[channelIndex], windowStartSeconds, windowEndSeconds)
         end for
         m.top.guide = window
