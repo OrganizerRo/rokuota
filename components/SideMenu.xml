@@ -5,6 +5,7 @@
     <field id="settingsRequested" type="boolean" alwaysNotify="true" />
     <field id="viewRequested" type="string" alwaysNotify="true" />
     <field id="focusRequested" type="boolean" alwaysNotify="true" />
+    <field id="onDemandUnlocked" type="boolean" value="false" />
   </interface>
 
   <children>
@@ -35,12 +36,15 @@
         m.menuList = m.top.findNode("menuList")
         m.menuList.observeField("itemSelected", "onItemSelected")
         m.top.observeField("focusRequested", "onFocusRequested")
+        m.top.observeField("onDemandUnlocked", "buildMenuContent")
         buildMenuContent()
       end sub
 
       sub buildMenuContent()
         content = createObject("roSGNode", "ContentNode")
-        for each title in [ "On Demand", "Live TV", "Settings" ]
+        titles = [ "Live TV", "Settings" ]
+        if m.top.onDemandUnlocked then titles.unshift("On Demand")
+        for each title in titles
           item = content.createChild("ContentNode")
           item.title = title
         end for
@@ -53,11 +57,12 @@
 
       sub onItemSelected(event as object)
         index = event.getData()
-        if index = 0
+        title = m.menuList.content.getChild(index).title
+        if title = "On Demand"
           m.top.viewRequested = "onDemand"
-        else if index = 1
+        else if title = "Live TV"
           m.top.viewRequested = "liveTV"
-        else if index = 2
+        else if title = "Settings"
           m.top.settingsRequested = true
         end if
       end sub

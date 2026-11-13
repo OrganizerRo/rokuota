@@ -42,6 +42,8 @@
         m.capabilityValidator = m.top.findNode("capabilityValidator")
         m.catalogTask = m.top.findNode("catalogTask")
         m.liveGuideTask = invalid
+        m.liveGuideRequestId = 0
+        m.deferredLiveGuide = invalid
         m.playlistTask = m.top.findNode("playlistTask")
         m.playlistLoadWatchdog = m.top.findNode("playlistLoadWatchdog")
 
@@ -64,6 +66,7 @@
         m.sideMenu.observeField("viewRequested", "onViewRequested")
         m.settingsView.observeField("closeRequested", "onSettingsViewClosed")
         m.settingsView.observeField("settingChanged", "onSettingChanged")
+        m.settingsView.observeField("onDemandUnlocked", "onOnDemandUnlocked")
         m.capabilityValidator.observeField("complete", "onCapabilitiesValidated")
         m.catalogTask.observeField("catalog", "onCatalogLoaded")
         m.catalogTask.observeField("errorMessage", "onCatalogError")
@@ -190,6 +193,12 @@
       sub onLiveGuideLoaded(event as object)
         guide = event.getData()
         if guide = invalid then return
+        if guide.requestId <> m.liveGuideRequestId then return
+        if guide.reset <> true and m.videoComponent.visible
+          m.deferredLiveGuide = guide
+          return
+        end if
+        m.deferredLiveGuide = invalid
         m.liveTVGuide.content = guide
         if guide.reset <> true then return
         closeLoading()
@@ -207,7 +216,11 @@
       sub onLiveGuideWindowRequested(event as object)
         request = event.getData()
         if type(request) <> "roAssociativeArray" then return
-        startLiveGuideTask(m.liveGuideTask.uri, request)
+        if m.liveGuideTask = invalid then return
+        m.liveGuideRequestId++
+        m.deferredLiveGuide = invalid
+        request.requestId = m.liveGuideRequestId
+        m.liveGuideTask.windowRequest = request
       end sub
 
       sub onChannelSelected(event as object)
@@ -372,6 +385,10 @@
         end if
         m.defaultChannelPlayback = false
         if m.playbackReturnTarget = "liveTVGuide"
+          if m.deferredLiveGuide <> invalid and m.deferredLiveGuide.requestId = m.liveGuideRequestId
+            m.liveTVGuide.content = m.deferredLiveGuide
+          end if
+          m.deferredLiveGuide = invalid
           showGuide("liveTV")
           focusLiveGuide()
         else if m.playbackReturnTarget = "playlistGuide" and m.channelPlaylist <> invalid
@@ -577,7 +594,7 @@
 
       sub onViewRequested(event as object)
         requestedView = event.getData()
-        if requestedView = "onDemand"
+        if requestedView = "onDemand" and m.sideMenu.onDemandUnlocked
           loadOnDemandGuide()
         else if requestedView = "liveTV"
           loadLiveGuide()
@@ -606,20 +623,22 @@
           return
         end if
         showLoading("Loading Live TV guide...")
-        startLiveGuideTask(uri, invalid)
+        startLiveGuideTask(uri)
       end sub
 
-      sub startLiveGuideTask(uri as string, windowRequest as dynamic)
+      sub startLiveGuideTask(uri as string)
         if m.liveGuideTask <> invalid
+          m.liveGuideTask.unobserveField("guide")
+          m.liveGuideTask.unobserveField("errorMessage")
           m.liveGuideTask.control = "stop"
           m.top.removeChild(m.liveGuideTask)
         end if
 
         task = createObject("roSGNode", "LiveGuideTask")
         task.uri = uri
-        if type(windowRequest) = "roAssociativeArray"
-          task.windowRequest = windowRequest
-        end if
+        m.liveGuideRequestId++
+        m.deferredLiveGuide = invalid
+        task.windowRequest = { requestId: m.liveGuideRequestId, reset: true }
         task.observeField("guide", "onLiveGuideLoaded")
         task.observeField("errorMessage", "onLiveGuideError")
         m.top.appendChild(task)
@@ -642,10 +661,17 @@
       sub onSettingChanged(event as object)
         changed = event.getData()
         if changed <> invalid and changed.key = "server_url"
+          if m.serverUrl <> changed.value
+            m.settingsView.onDemandUnlocked = false
+          end if
           m.serverUrl = changed.value
           m.tvGuide.content = invalid
           m.liveTVGuide.content = invalid
         end if
+      end sub
+
+      sub onOnDemandUnlocked()
+        m.sideMenu.onDemandUnlocked = m.settingsView.onDemandUnlocked
       end sub
 
       function onKeyEvent(key as string, press as boolean) as boolean

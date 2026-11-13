@@ -32,8 +32,12 @@ poster area. Leave it empty to show no off-air artwork.
 
 The left menu provides two guide actions. **On Demand** opens the channel and
 playlist browser backed by `/channels/`, while **Live TV** opens the
-time-proportional linear schedule backed by `/channels/guide`. **Settings**
-configures the server URL. Selecting any Live TV program tile tunes the
+time-proportional linear schedule backed by `/channels/guide`. **On Demand**
+is hidden from the menu until its password is entered in **Settings** for the
+current session. The password is checked against the plain-text response from
+the server root's `/settings/ondemandpwd`; changing the server URL locks it
+again. **Settings** also configures the server URL. This controls the menu
+option only, not other routes to On Demand. Selecting any Live TV program tile tunes the
 channel's current `/{channel}/live` broadcast and continues with the next
 program when the current one finishes. The Live TV parser uses the `title` and
 `entries` fields emitted by the server's guide endpoint, with each entry's

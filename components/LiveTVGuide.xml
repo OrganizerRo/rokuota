@@ -99,7 +99,6 @@
         m.top.observeField("content", "onContentChanged")
         m.top.observeField("focusRequested", "onFocusRequested")
         m.top.observeField("visible", "onVisibilityChanged")
-        m.top.observeField("focused", "onVisibilityChanged")
         m.nowPlayingTimer.observeField("fire", "onNowPlayingTimer")
 
         ' Screen Constants
@@ -123,6 +122,7 @@
         m.hasDetailPoster = false
         m.windowChannelStart = 0
         m.totalChannels = 0
+        m.windowPending = false
 
         m.rowPool = []
         m.headerLabelPool = []
@@ -210,8 +210,9 @@
       end sub
 
       sub onVisibilityChanged()
-        if m.top.visible and m.top.hasFocus()
+        if m.top.visible
           m.nowPlayingTimer.control = "start"
+          onNowPlayingTimer()
         else
           m.nowPlayingTimer.control = "stop"
         end if
@@ -231,6 +232,7 @@
         m.windowChannelStart = m.top.content.windowChannelStart
         m.totalChannels = m.top.content.totalChannels
         m.windowStartSeconds = m.top.content.windowStartSeconds
+        m.windowPending = false
         buildFastProgramIndex()
         if isReset
           m.channelIndex = 0
@@ -238,7 +240,11 @@
           m.topRowIndex = 0
           m.leftColIndex = 0
         end if
-        renderView()
+        if m.top.visible
+          onNowPlayingTimer()
+        else
+          renderView()
+        end if
       end sub
 
       sub calculateWindowStartTime()
@@ -264,10 +270,13 @@
                 dur = prog.durationSeconds
                 if dur <= 0 then dur = 1800
                 
-                ' Only map block instants at or after the program starts.
-                blockStart = st - (st mod 1800)
-                if blockStart < st then blockStart += 1800
+                blockStart = m.windowStartSeconds
+                if st > blockStart
+                  blockStart += int((st - blockStart + 1799) / 1800) * 1800
+                end if
                 blockEnd = st + dur
+                windowEnd = m.windowStartSeconds + m.top.content.slotCount * 1800
+                if blockEnd > windowEnd then blockEnd = windowEnd
                 
                 currBlock = blockStart
                 while currBlock < blockEnd
@@ -420,6 +429,7 @@
       end sub
 
       sub onNowPlayingTimer()
+        if m.top.content = invalid then return
         previousWindowStart = m.windowStartSeconds
         calculateWindowStartTime()
         if m.windowStartSeconds <> previousWindowStart
@@ -432,6 +442,7 @@
       sub requestWindow(channelIndex as integer, reset as boolean)
         channelStart = channelIndex - (m.VISIBLE_ROWS - 1)
         if channelStart < 0 then channelStart = 0
+        m.windowPending = true
         m.top.windowRequested = {
           channelStart: channelStart,
           channelCount: m.WINDOW_CHANNELS,
@@ -472,9 +483,10 @@
         else if key = "up"
           if m.channelIndex > 0
             m.channelIndex--
-            if channelForIndex(m.channelIndex) = invalid
+            if channelForIndex(m.channelIndex) = invalid or m.windowPending
               requestWindow(m.channelIndex, false)
-            else
+            end if
+            if channelForIndex(m.channelIndex) <> invalid
               renderView()
             end if
           end if
@@ -482,9 +494,10 @@
         else if key = "down"
           if m.channelIndex + 1 < m.totalChannels
             m.channelIndex++
-            if channelForIndex(m.channelIndex) = invalid
+            if channelForIndex(m.channelIndex) = invalid or m.windowPending
               requestWindow(m.channelIndex, false)
-            else
+            end if
+            if channelForIndex(m.channelIndex) <> invalid
               renderView()
             end if
           end if

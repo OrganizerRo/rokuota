@@ -15,8 +15,20 @@
       end sub
 
       sub serveGuide()
+        port = createObject("roMessagePort")
+        m.top.observeField("windowRequest", port)
         if not loadGuideData() then return
-        publishWindow()
+        lastRequestId = -1
+        while true
+          request = m.top.windowRequest
+          if type(request) = "roAssociativeArray" and request.doesExist("requestId") and request.requestId <> lastRequestId
+            lastRequestId = request.requestId
+            publishWindow(request)
+          end if
+          wait(0, port)
+          while port.getMessage() <> invalid
+          end while
+        end while
       end sub
 
       function loadGuideData() as boolean
@@ -115,6 +127,14 @@
         if programs.count() = 0 then return invalid
 
         assignProgramDurations(programs, isLooping)
+        offsets = []
+        cycleDuration = 0
+        if isLooping
+          for each program in programs
+            offsets.push(cycleDuration)
+            cycleDuration += program.durationSeconds
+          end for
+        end if
         return {
           title: jsonString(channel, "title"),
           description: jsonString(channel, "description"),
@@ -122,7 +142,8 @@
           liveUrl: liveUrl(jsonString(channel, "title")),
           isLooping: isLooping,
           programs: programs,
-          cycleDuration: programCycleDuration(programs, isLooping)
+          cycleDuration: cycleDuration,
+          cycleOffsets: offsets
         }
       end function
 
@@ -164,21 +185,11 @@
         end for
       end sub
 
-      function programCycleDuration(programs as object, isLooping as boolean) as integer
-        if not isLooping then return 0
-        duration = 0
-        for each program in programs
-          duration += program.durationSeconds
-        end for
-        return duration
-      end function
-
-      sub publishWindow()
+      sub publishWindow(windowRequest as object)
         if m.channels = invalid then return
 
-        windowRequest = m.top.windowRequest
         channelStart = 0
-        channelCount = m.channels.count()
+        channelCount = 6
         slotCount = 48
         reset = true
         windowStartSeconds = currentWindowStartSeconds()
@@ -198,20 +209,24 @@
         end if
         if slotCount < 1 then slotCount = 48
 
-        windowEndSeconds = windowStartSeconds + (slotCount * 1800)
-
         window = createObject("roSGNode", "ContentNode")
         window.addFields({
           windowChannelStart: channelStart,
           totalChannels: m.channels.count(),
           windowStartSeconds: windowStartSeconds,
           slotCount: slotCount,
-          reset: reset
+          reset: reset,
+          requestId: windowRequest.requestId
         })
         for channelIndex = channelStart to channelStart + channelCount - 1
-          appendWindowChannel(window, m.channels[channelIndex], windowStartSeconds, windowEndSeconds)
+          latestRequest = m.top.windowRequest
+          if latestRequest = invalid or latestRequest.requestId <> windowRequest.requestId then return
+          appendWindowChannel(window, m.channels[channelIndex], windowStartSeconds, slotCount)
         end for
-        m.top.guide = window
+        latestRequest = m.top.windowRequest
+        if latestRequest <> invalid and latestRequest.requestId = windowRequest.requestId
+          m.top.guide = window
+        end if
       end sub
 
       function currentWindowStartSeconds() as integer
@@ -223,7 +238,7 @@
         return utcSeconds - secondsIntoBlock
       end function
 
-      sub appendWindowChannel(parent as object, channel as object, windowStartSeconds as integer, windowEndSeconds as integer)
+      sub appendWindowChannel(parent as object, channel as object, windowStartSeconds as integer, slotCount as integer)
         item = parent.createChild("ContentNode")
         item.addFields({
           liveUrl: channel.liveUrl,
@@ -234,39 +249,64 @@
         item.HDPosterUrl = channel.thumbnail
 
         if channel.isLooping and channel.cycleDuration > 0
-          appendLoopingWindowPrograms(item, channel, windowStartSeconds, windowEndSeconds)
+          appendLoopingWindowPrograms(item, channel, windowStartSeconds, slotCount)
         else
+          filledSlots = []
+          for slot = 0 to slotCount - 1
+            filledSlots.push(false)
+          end for
+          remainingSlots = slotCount
+          lastSlotTime = windowStartSeconds + (slotCount - 1) * 1800
           for each program in channel.programs
-            if program.startTimeSeconds + program.durationSeconds > windowStartSeconds and program.startTimeSeconds < windowEndSeconds
+            selected = false
+            programEnd = program.startTimeSeconds + program.durationSeconds
+            if program.startTimeSeconds <= lastSlotTime and programEnd > windowStartSeconds
+              firstSlot = 0
+              if program.startTimeSeconds > windowStartSeconds
+                firstSlot = int((program.startTimeSeconds - windowStartSeconds + 1799) / 1800)
+              end if
+              for slot = firstSlot to slotCount - 1
+                targetTime = windowStartSeconds + slot * 1800
+                if targetTime >= programEnd then exit for
+                if not filledSlots[slot]
+                  filledSlots[slot] = true
+                  remainingSlots--
+                  selected = true
+                end if
+              end for
+            end if
+            if selected
               appendWindowProgram(item, program, program.startTimeSeconds)
             end if
+            if remainingSlots = 0 then exit for
           end for
         end if
       end sub
 
-      sub appendLoopingWindowPrograms(parent as object, channel as object, windowStartSeconds as integer, windowEndSeconds as integer)
+      sub appendLoopingWindowPrograms(parent as object, channel as object, windowStartSeconds as integer, slotCount as integer)
         firstStart = channel.programs[0].startTimeSeconds
-        cycleStart = firstStart
-        if windowStartSeconds > firstStart
-          cycleStart += int((windowStartSeconds - firstStart) / channel.cycleDuration) * channel.cycleDuration
-          while cycleStart + channel.cycleDuration <= windowStartSeconds
-            cycleStart += channel.cycleDuration
-          end while
-        end if
-        while cycleStart > windowStartSeconds
-          cycleStart -= channel.cycleDuration
-        end while
-
-        while cycleStart < windowEndSeconds
-          occurrenceStart = cycleStart
-          for each program in channel.programs
-            if occurrenceStart + program.durationSeconds > windowStartSeconds and occurrenceStart < windowEndSeconds
-              appendWindowProgram(parent, program, occurrenceStart)
+        previousStart = -1
+        for slot = 0 to slotCount - 1
+          targetTime = windowStartSeconds + slot * 1800
+          offset = (targetTime - firstStart) mod channel.cycleDuration
+          if offset < 0 then offset += channel.cycleDuration
+          cycleStart = targetTime - offset
+          low = 0
+          high = channel.programs.count() - 1
+          while low < high
+            mid = int((low + high + 1) / 2)
+            if channel.cycleOffsets[mid] <= offset
+              low = mid
+            else
+              high = mid - 1
             end if
-            occurrenceStart += program.durationSeconds
-          end for
-          cycleStart += channel.cycleDuration
-        end while
+          end while
+          occurrenceStart = cycleStart + channel.cycleOffsets[low]
+          if occurrenceStart <> previousStart
+            appendWindowProgram(parent, channel.programs[low], occurrenceStart)
+            previousStart = occurrenceStart
+          end if
+        end for
       end sub
 
       sub appendWindowProgram(parent as object, source as object, occurrenceStart as integer)

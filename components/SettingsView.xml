@@ -5,6 +5,7 @@
     <field id="closeRequested" type="boolean" alwaysNotify="true" />
     <field id="settingChanged" type="assocarray" alwaysNotify="true" />
     <field id="focusRequested" type="boolean" alwaysNotify="true" />
+    <field id="onDemandUnlocked" type="boolean" value="false" alwaysNotify="true" />
   </interface>
 
   <children>
@@ -38,18 +39,22 @@
       id="serverList"
       translation="[110,235]"
       itemSize="[600,80]"
-      numRows="1"
+      numRows="2"
       drawFocusFeedback="true"
       itemComponentName="SettingsItemRenderer" />
+    <OnDemandPasswordTask id="passwordTask" />
   </children>
 
   <script type="text/brightscript">
     <![CDATA[
       sub init()
         m.serverList = m.top.findNode("serverList")
+        m.passwordTask = m.top.findNode("passwordTask")
+        m.passwordTask.observeField("result", "onPasswordResult")
         m.serverList.observeField("itemSelected", "onServerSelected")
         m.top.observeField("focusRequested", "onFocusRequested")
         m.top.observeField("serverUrl", "onServerUrlChanged")
+        m.top.observeField("onDemandUnlocked", "buildSettingsContent")
         m.editingIndex = -1
         buildSettingsContent()
       end sub
@@ -59,6 +64,13 @@
         serverItem = serverContent.createChild("ContentNode")
         serverItem.title = "Server URL"
         serverItem.description = m.top.serverUrl
+        passwordItem = serverContent.createChild("ContentNode")
+        passwordItem.title = "On Demand Password"
+        if m.top.onDemandUnlocked
+          passwordItem.description = "Unlocked for this session"
+        else
+          passwordItem.description = "Enter password to unlock"
+        end if
         m.serverList.content = serverContent
       end sub
 
@@ -70,9 +82,13 @@
         m.serverList.setFocus(true)
       end sub
 
-      sub onServerSelected()
-        m.editingIndex = 0
-        showKeyboard("Server URL", m.top.serverUrl)
+      sub onServerSelected(event as object)
+        m.editingIndex = event.getData()
+        if m.editingIndex = 0
+          showKeyboard("Server URL", m.top.serverUrl)
+        else if m.editingIndex = 1
+          showKeyboard("On Demand Password", "")
+        end if
       end sub
 
       sub showKeyboard(title as string, currentValue as string)
@@ -80,6 +96,7 @@
         dialog.title = "Edit " + title
         dialog.buttons = ["OK", "Cancel"]
         dialog.text = currentValue
+        if m.editingIndex = 1 then dialog.keyboard.textEditBox.secureMode = true
         dialog.observeField("buttonSelected", "onKeyboardButton")
         dialog.observeField("wasClosed", "onKeyboardClosed")
         m.keyboardDialog = dialog
@@ -94,6 +111,11 @@
             saveSetting("server_url", newValue)
             m.top.serverUrl = newValue
             m.top.settingChanged = { key: "server_url", value: newValue }
+          else if m.editingIndex = 1
+            m.pendingPassword = newValue
+            m.keyboardDialog.text = ""
+            m.top.onDemandUnlocked = false
+            buildSettingsContent()
           end if
         end if
         m.keyboardDialog.close = true
@@ -102,6 +124,60 @@
       sub onKeyboardClosed()
         m.keyboardDialog = invalid
         m.editingIndex = -1
+        if m.pendingPassword <> invalid
+          password = m.pendingPassword
+          m.pendingPassword = invalid
+          m.passwordTask.uri = passwordUrl(m.top.serverUrl)
+          m.passwordTask.password = password
+          m.progressDialog = createObject("roSGNode", "ProgressDialog")
+          m.progressDialog.title = "Checking password..."
+          m.top.getScene().dialog = m.progressDialog
+          m.passwordTask.control = "run"
+          return
+        end if
+        m.serverList.setFocus(true)
+      end sub
+
+      function passwordUrl(serverUrl as string) as string
+        value = serverUrl.trim()
+        schemeEnd = instr(1, value, "://")
+        if schemeEnd = 0 then return ""
+        scheme = LCase(value.left(schemeEnd - 1))
+        if scheme <> "http" and scheme <> "https" then return ""
+        authorityStart = schemeEnd + 3
+        endAt = value.len() + 1
+        for each separator in ["/", "?", "#"]
+          separatorAt = instr(authorityStart, value, separator)
+          if separatorAt > 0 and separatorAt < endAt then endAt = separatorAt
+        end for
+        if endAt = authorityStart then return ""
+        return value.left(endAt - 1) + "/settings/ondemandpwd"
+      end function
+
+      sub onPasswordResult(event as object)
+        result = event.getData()
+        if result = invalid then return
+        m.passwordTask.password = ""
+        if m.progressDialog <> invalid then m.progressDialog.close = true
+        m.progressDialog = invalid
+        m.top.onDemandUnlocked = result.matched
+        buildSettingsContent()
+        dialog = createObject("roSGNode", "Dialog")
+        dialog.title = "On Demand"
+        dialog.message = result.message
+        dialog.buttons = ["OK"]
+        dialog.observeField("buttonSelected", "onPasswordDialogButton")
+        dialog.observeField("wasClosed", "onPasswordDialogClosed")
+        m.passwordDialog = dialog
+        m.top.getScene().dialog = dialog
+      end sub
+
+      sub onPasswordDialogButton()
+        if m.passwordDialog <> invalid then m.passwordDialog.close = true
+      end sub
+
+      sub onPasswordDialogClosed()
+        m.passwordDialog = invalid
         m.serverList.setFocus(true)
       end sub
 
