@@ -8,6 +8,7 @@
     <field id="loopPlaylist" type="boolean" value="false" />
     <field id="playbackMode" type="string" value="onDemand" />
     <field id="livePlaylistCount" type="integer" value="0" />
+    <field id="scheduleChannel" type="node" />
     <field id="exitDestinationLabel" type="string" value="TV Guide" />
     <field id="playbackRequested" type="boolean" alwaysNotify="true" />
     <field id="playbackEnded" type="boolean" alwaysNotify="true" />
@@ -227,6 +228,10 @@
     <Timer id="teardownTimer" duration="0.25" repeat="false" />
     <MediaUrlTask id="currentItemResolver" />
     <MediaUrlTask id="nextItemResolver" />
+    <Timer id="liveBoundaryTimer" duration="1" repeat="false" />
+    <Timer id="livePrefetchTimer" duration="1" repeat="false" />
+    <Timer id="liveSwitchTimer" duration="1" repeat="false" />
+    <MediaUrlTask id="boundaryResolver" />
     <AudioStatusTask id="audioStatusTask" />
   </children>
 
@@ -271,6 +276,15 @@
         m.currentItemResolver = m.top.findNode("currentItemResolver")
         m.nextItemResolver = m.top.findNode("nextItemResolver")
         m.audioStatusTask = m.top.findNode("audioStatusTask")
+        m.liveBoundaryTimer = m.top.findNode("liveBoundaryTimer")
+        m.boundaryResolver = m.top.findNode("boundaryResolver")
+        m.livePrefetchTimer = m.top.findNode("livePrefetchTimer")
+        m.liveSwitchTimer = m.top.findNode("liveSwitchTimer")
+        m.nextBoundarySeconds = 0
+        m.boundaryTargetIndex = -1
+        m.boundaryPrefetchOwned = false
+        m.boundaryPending = false
+        m.boundaryRetried = false
         m.exitDialog = createObject("roSGNode", "Dialog")
         m.exitDialog.title = "Return to TV Guide?"
         m.exitDialog.message = "The rest of this channel's playlist will not be played."
@@ -317,6 +331,11 @@
         m.nextItemResolver.observeField("mediaUrl", "onNextMediaUrlResolved")
         m.nextItemResolver.observeField("errorMessage", "onNextMediaUrlError")
         m.audioStatusTask.observeField("statusText", "onAudioStatusLoaded")
+        m.liveBoundaryTimer.observeField("fire", "onLiveBoundaryTimer")
+        m.livePrefetchTimer.observeField("fire", "onLivePrefetchTimer")
+        m.liveSwitchTimer.observeField("fire", "onLiveSwitchTimer")
+        m.boundaryResolver.observeField("mediaUrl", "onBoundaryMediaUrlResolved")
+        m.boundaryResolver.observeField("errorMessage", "onBoundaryMediaUrlError")
         m.loadWatchdog.observeField("fire", "onLoadTimeout")
         m.prefetchWaitWatchdog.observeField("fire", "onPrefetchWaitTimeout")
         m.skipTimer.observeField("fire", "playNext")
@@ -360,7 +379,183 @@
         m.active = true
         m.currentItemResolver.control = "stop"
         m.nextItemResolver.control = "stop"
+        m.boundaryResolver.control = "stop"
+        m.boundaryPending = false
+        m.boundaryTargetIndex = -1
+        m.boundaryPrefetchOwned = false
+        if m.top.playbackMode = "live"
+          armLiveBoundaryTimer()
+        else
+          m.liveBoundaryTimer.control = "stop"
+          m.livePrefetchTimer.control = "stop"
+          m.liveSwitchTimer.control = "stop"
+        end if
         playCurrent()
+      end sub
+
+      ' Arms three one-shot timers per boundary: prefetch at -3s, switch at the boundary, verify at +1s.
+      sub armLiveBoundaryTimer()
+        dt = createObject("roDateTime")
+        dt.mark()
+        utcSeconds = dt.asSeconds()
+        dt.toLocalTime()
+        secondsIntoBlock = (dt.getMinutes() * 60 + dt.getSeconds()) mod 1800
+        remaining = 1800 - secondsIntoBlock
+        m.nextBoundarySeconds = utcSeconds + remaining
+
+        m.livePrefetchTimer.control = "stop"
+        m.liveSwitchTimer.control = "stop"
+        m.liveBoundaryTimer.control = "stop"
+        if remaining - 3 >= 1
+          m.livePrefetchTimer.duration = remaining - 3
+          m.livePrefetchTimer.control = "start"
+        end if
+        m.liveSwitchTimer.duration = remaining
+        m.liveSwitchTimer.control = "start"
+        m.liveBoundaryTimer.duration = remaining + 1
+        m.liveBoundaryTimer.control = "start"
+      end sub
+
+      ' Program the guide schedules at the given time, or -1 when unknown.
+      function scheduledIndexAt(targetSeconds as integer) as integer
+        channel = m.top.scheduleChannel
+        if channel = invalid then return -1
+        for index = 0 to channel.getChildCount() - 1
+          program = channel.getChild(index)
+          if program <> invalid and program.startTimeSeconds <> invalid and program.programIndex <> invalid
+            duration = program.durationSeconds
+            if duration = invalid or duration <= 0 then duration = 1800
+            if targetSeconds >= program.startTimeSeconds and targetSeconds < program.startTimeSeconds + duration
+              return program.programIndex
+            end if
+          end if
+        end for
+        return -1
+      end function
+
+      sub onLivePrefetchTimer()
+        if not m.active or m.top.playbackMode <> "live" or m.top.singleItem then return
+        if m.resolvePending or m.failurePending then return
+        predicted = scheduledIndexAt(m.nextBoundarySeconds)
+        if predicted < 0 or m.currentServerIndex < 0 or predicted = m.currentServerIndex then return
+        m.boundaryTargetIndex = predicted
+        if m.prefetchedItem <> invalid
+          if m.prefetchedItem.serverIndex = predicted then return
+          discardBoundaryPrefetch()
+        end if
+        item = m.top.playlist.getChild(m.currentIndex)
+        if item = invalid or item.resolveUrl = "" then return
+        baseUri = liveBaseUri(item.resolveUrl)
+        if baseUri = "" then return
+
+        m.nextItemResolver.control = "stop"
+        m.expectedPrefetchIndex = m.currentIndex
+        m.expectedServerIndex = predicted
+        m.transitionWaitingForPrefetch = false
+        m.nextResolvePending = true
+        m.boundaryPrefetchOwned = true
+        m.nextItemResolver.uri = baseUri + "/" + predicted.toStr()
+        m.nextItemResolver.control = "run"
+      end sub
+
+      sub onLiveSwitchTimer()
+        target = m.boundaryTargetIndex
+        m.boundaryTargetIndex = -1
+        if not m.active or m.top.playbackMode <> "live" or target < 0 then return
+        if target = m.currentServerIndex then return
+        if m.prefetchedItem <> invalid and m.prefetchedItem.serverIndex = target
+          promotePrefetchedItem()
+        end if
+      end sub
+
+      sub discardBoundaryPrefetch()
+        standby = standbyVideo()
+        standby.control = "stop"
+        standby.content = invalid
+        m.prefetchedItem = invalid
+        m.nextResolvePending = false
+        m.nextItemResolver.control = "stop"
+        m.transitionWaitingForPrefetch = false
+        m.prefetchWaitWatchdog.control = "stop"
+        m.boundaryPrefetchOwned = false
+      end sub
+
+      sub onLiveBoundaryTimer()
+        if not m.active or m.top.playbackMode <> "live" then return
+        armLiveBoundaryTimer()
+        if m.resolvePending or m.boundaryPending then return
+        item = m.top.playlist.getChild(m.currentIndex)
+        if item = invalid or item.resolveUrl = "" then return
+        m.boundaryRetried = false
+        runBoundaryCheck(item.resolveUrl)
+      end sub
+
+      sub runBoundaryCheck(uri as string)
+        m.boundaryPending = true
+        m.boundaryResolver.control = "stop"
+        m.boundaryResolver.uri = uri
+        m.boundaryResolver.control = "run"
+      end sub
+
+      sub onBoundaryMediaUrlError(event as object)
+        if event.getData() = "" or not m.boundaryPending then return
+        m.boundaryPending = false
+        ' Retry once right away; after that, wait for the next boundary.
+        if m.boundaryRetried or not m.active or m.resolvePending then return
+        item = m.top.playlist.getChild(m.currentIndex)
+        if item = invalid or item.resolveUrl = "" then return
+        m.boundaryRetried = true
+        runBoundaryCheck(item.resolveUrl)
+      end sub
+
+      sub onBoundaryMediaUrlResolved(event as object)
+        mediaUrl = event.getData()
+        if not m.boundaryPending or mediaUrl = "" then return
+        m.boundaryPending = false
+        if not m.active or m.resolvePending then return
+
+        serverIndex = m.boundaryResolver.playlistIndex
+        if serverIndex >= 0 and m.currentServerIndex >= 0
+          if serverIndex = m.currentServerIndex
+            if m.boundaryPrefetchOwned then discardBoundaryPrefetch()
+            return
+          end if
+        else if mediaUrl = m.activeMediaUrl
+          if m.boundaryPrefetchOwned then discardBoundaryPrefetch()
+          return
+        end if
+
+        item = m.top.playlist.getChild(m.currentIndex)
+        title = m.boundaryResolver.mediaTitle
+        description = m.boundaryResolver.mediaDescription
+        thumbnail = m.boundaryResolver.mediaThumbnail
+        length = m.boundaryResolver.mediaLength
+        if item <> invalid
+          if title = "" then title = item.title
+          if description = "" then description = item.description
+          if thumbnail = "" then thumbnail = item.HDPosterUrl
+          if length < 0 then length = item.metadataLength
+        end if
+        if title = "" then title = m.top.channelTitle
+        resolved = resolvedItem(mediaUrl, title, m.boundaryResolver.streamFormat, description, thumbnail, length, m.boundaryResolver.positionSeconds, m.currentIndex, serverIndex, m.boundaryResolver.resolverDuration)
+
+        ' Drop any prefetched or pending next program; it belonged to the old schedule.
+        standby = standbyVideo()
+        standby.control = "stop"
+        standby.content = invalid
+        m.prefetchedItem = invalid
+        m.boundaryPrefetchOwned = false
+        m.prefetchFailed = false
+        m.nextResolvePending = false
+        m.nextItemResolver.control = "stop"
+        m.transitionWaitingForPrefetch = false
+        m.prefetchWaitWatchdog.control = "stop"
+        m.skipTimer.control = "stop"
+        m.failurePending = false
+        m.loadWatchdog.control = "stop"
+        m.video.control = "stop"
+        m.audio.control = "stop"
+        startResolvedMedia(resolved)
       end sub
 
       sub resetPlaybackSlots()
@@ -662,6 +857,7 @@
         m.liveFallbackAttempts = 0
         m.liveFallbackFailed = false
         m.currentServerIndex = resolved.serverIndex
+        m.activeMediaUrl = resolved.url
         m.currentResolverDuration = resolved.resolverDuration
         m.activeContentTitle = resolved.title
         m.activeContentDescription = resolved.description
@@ -884,6 +1080,7 @@
       sub promotePrefetchedItem()
         resolved = m.prefetchedItem
         m.prefetchedItem = invalid
+        m.boundaryPrefetchOwned = false
         m.currentIndex = resolved.logicalIndex
         if m.top.playbackMode = "live" then m.liveUsesClockNext = false
 
@@ -912,6 +1109,7 @@
         m.metricsLogged = false
         m.failurePending = false
         m.currentServerIndex = resolved.serverIndex
+        m.activeMediaUrl = resolved.url
         m.currentResolverDuration = resolved.resolverDuration
         m.activeContentTitle = resolved.title
         m.activeContentDescription = resolved.description
@@ -1305,7 +1503,13 @@
         m.lastSeekDirection = ""
         m.currentItemResolver.control = "stop"
         m.nextItemResolver.control = "stop"
-        m.loadWatchdog.control = "stop"
+        m.boundaryResolver.control = "stop"
+        m.boundaryPending = false
+        m.liveBoundaryTimer.control = "stop"
+        m.livePrefetchTimer.control = "stop"
+        m.liveSwitchTimer.control = "stop"
+        m.boundaryTargetIndex = -1
+        m.boundaryPrefetchOwned = false
         m.prefetchWaitWatchdog.control = "stop"
         m.skipTimer.control = "stop"
         m.metadataHideTimer.control = "stop"

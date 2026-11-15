@@ -2,6 +2,7 @@
 <component name="SettingsView" extends="Group">
   <interface>
     <field id="serverUrl" type="string" />
+    <field id="programFontSize" type="integer" value="22" />
     <field id="closeRequested" type="boolean" alwaysNotify="true" />
     <field id="settingChanged" type="assocarray" alwaysNotify="true" />
     <field id="focusRequested" type="boolean" alwaysNotify="true" />
@@ -31,7 +32,7 @@
       translation="[110,190]"
       width="600"
       height="32"
-      text="CONNECTION"
+      text="APP SETTINGS"
       font="font:SmallBoldSystemFont"
       color="#9DB0C3" />
 
@@ -39,7 +40,7 @@
       id="serverList"
       translation="[110,235]"
       itemSize="[600,80]"
-      numRows="2"
+      numRows="3"
       drawFocusFeedback="true"
       itemComponentName="SettingsItemRenderer" />
     <OnDemandPasswordTask id="passwordTask" />
@@ -54,6 +55,7 @@
         m.serverList.observeField("itemSelected", "onServerSelected")
         m.top.observeField("focusRequested", "onFocusRequested")
         m.top.observeField("serverUrl", "onServerUrlChanged")
+        m.top.observeField("programFontSize", "buildSettingsContent")
         m.top.observeField("onDemandUnlocked", "buildSettingsContent")
         m.editingIndex = -1
         buildSettingsContent()
@@ -71,6 +73,9 @@
         else
           passwordItem.description = "Enter password to unlock"
         end if
+        fontSizeItem = serverContent.createChild("ContentNode")
+        fontSizeItem.title = "Live TV Program Text Size"
+        fontSizeItem.description = m.top.programFontSize.toStr() + " pt"
         m.serverList.content = serverContent
       end sub
 
@@ -88,6 +93,8 @@
           showKeyboard("Server URL", m.top.serverUrl)
         else if m.editingIndex = 1
           showKeyboard("On Demand Password", "")
+        else if m.editingIndex = 2
+          showKeyboard("Live TV Program Text Size", m.top.programFontSize.toStr())
         end if
       end sub
 
@@ -116,6 +123,16 @@
             m.keyboardDialog.text = ""
             m.top.onDemandUnlocked = false
             buildSettingsContent()
+          else if m.editingIndex = 2
+            fontSize = parseProgramFontSize(newValue)
+            if fontSize < 0
+              m.pendingFontSizeError = true
+            else
+              fontSizeValue = fontSize.toStr()
+              saveSetting("live_tv_program_font_size", fontSizeValue)
+              m.top.programFontSize = fontSize
+              m.top.settingChanged = { key: "live_tv_program_font_size", value: fontSize }
+            end if
           end if
         end if
         m.keyboardDialog.close = true
@@ -135,6 +152,38 @@
           m.passwordTask.control = "run"
           return
         end if
+        if m.pendingFontSizeError
+          m.pendingFontSizeError = false
+          showFontSizeError()
+          return
+        end if
+        m.serverList.setFocus(true)
+      end sub
+
+      function parseProgramFontSize(value as string) as integer
+        value = value.trim()
+        if value = "" or value.len() > 2 then return -1
+        for index = 1 to value.len()
+          digit = value.mid(index - 1, 1)
+          if digit < "0" or digit > "9" then return -1
+        end for
+        fontSize = value.toInt()
+        if fontSize < 12 or fontSize > 36 then return -1
+        return fontSize
+      end function
+
+      sub showFontSizeError()
+        dialog = createObject("roSGNode", "Dialog")
+        dialog.title = "Invalid Text Size"
+        dialog.message = "Enter a whole number from 12 to 36 points."
+        dialog.buttons = ["OK"]
+        dialog.observeField("wasClosed", "onFontSizeErrorClosed")
+        m.fontSizeErrorDialog = dialog
+        m.top.getScene().dialog = dialog
+      end sub
+
+      sub onFontSizeErrorClosed()
+        m.fontSizeErrorDialog = invalid
         m.serverList.setFocus(true)
       end sub
 

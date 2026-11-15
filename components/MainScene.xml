@@ -78,6 +78,14 @@
 
         appInfo = createObject("roAppInfo")
         m.serverUrl = resolveServerUrl(appInfo.getValue("channel_catalog_url"))
+        storedProgramFontSize = readSetting("live_tv_program_font_size")
+        programFontSize = 22
+        if storedProgramFontSize <> ""
+          storedSize = storedProgramFontSize.toInt()
+          if storedSize >= 12 and storedSize <= 36 then programFontSize = storedSize
+        end if
+        m.liveTVGuide.programFontSize = programFontSize
+        m.settingsView.programFontSize = programFontSize
 		
         m.defaultChannel = ""
         defaultChannelValue = appInfo.getValue("default_channel")
@@ -335,8 +343,10 @@
         m.videoComponent.loopPlaylist = (returnTarget = "liveTVGuide")
         m.videoComponent.playbackMode = "onDemand"
         m.videoComponent.livePlaylistCount = 0
+        m.videoComponent.scheduleChannel = invalid
         if returnTarget = "liveTVGuide"
           m.videoComponent.playbackMode = "live"
+          m.videoComponent.scheduleChannel = m.selectedChannel
           if m.selectedChannel <> invalid then m.videoComponent.livePlaylistCount = livePlaylistSize(m.selectedChannel)
         else if not singleItem and m.selectedChannel <> invalid and m.selectedChannel.playlistType = "server-random"
           m.videoComponent.playbackMode = "shuffle"
@@ -660,13 +670,16 @@
 
       sub onSettingChanged(event as object)
         changed = event.getData()
-        if changed <> invalid and changed.key = "server_url"
+        if changed = invalid then return
+        if changed.key = "server_url"
           if m.serverUrl <> changed.value
             m.settingsView.onDemandUnlocked = false
           end if
           m.serverUrl = changed.value
           m.tvGuide.content = invalid
           m.liveTVGuide.content = invalid
+        else if changed.key = "live_tv_program_font_size"
+          m.liveTVGuide.programFontSize = changed.value
         end if
       end sub
 

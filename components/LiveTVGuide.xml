@@ -8,6 +8,7 @@
     <field id="menuRequested" type="boolean" alwaysNotify="true" />
     <field id="fastForwardPressed" type="boolean" alwaysNotify="true" />
     <field id="fastRewindPressed" type="boolean" alwaysNotify="true" />
+    <field id="programFontSize" type="integer" value="22" />
   </interface>
 
   <children>
@@ -58,6 +59,7 @@
       <!-- Time Header Pool -->
       <Group id="timeHeaderGroup" translation="[533, 330]">
         <Rectangle id="timeHeaderBg" width="1387" height="50" color="#141E2B" />
+        <Rectangle translation="[1386, 0]" width="1" height="50" color="#2A3A4E" />
         <Group id="timeLabelsGroup" />
       </Group>
 
@@ -72,6 +74,7 @@
       translation="[0, 380]"
       clippingRect="[0, 0, 1920, 710]">
       <Group id="rows" />
+      <Rectangle translation="[1919, 0]" width="1" height="710" color="#2A3A4E" />
       
       <!-- Single Flying Focus Highlight Frame -->
       <Group id="focusFrame">
@@ -99,6 +102,7 @@
         m.top.observeField("content", "onContentChanged")
         m.top.observeField("focusRequested", "onFocusRequested")
         m.top.observeField("visible", "onVisibilityChanged")
+        m.top.observeField("programFontSize", "onProgramFontSizeChanged")
         m.nowPlayingTimer.observeField("fire", "onNowPlayingTimer")
 
         ' Screen Constants
@@ -174,18 +178,24 @@
             tile = progGroup.createChild("Group")
             tileBg = tile.createChild("Rectangle")
             tileBg.width = m.SLOT_WIDTH - 2
+            if c = m.VISIBLE_COLS - 1
+              tileBg.width += 1920 - (m.CHANNEL_WIDTH + (m.VISIBLE_COLS * m.SLOT_WIDTH)) + 2
+            end if
             tileBg.height = m.ROW_HEIGHT - 4
             tileBg.color = "#202E3D"
 
             lbl = tile.createChild("Label")
             lbl.translation = [10, 15]
             lbl.width = m.SLOT_WIDTH - 20
-            lbl.height = 30
-            lbl.font = "font:SmallBoldSystemFont"
+            lbl.height = 50
+            programFont = createObject("roSGNode", "Font")
+            programFont.uri = "font:SmallBoldSystemFont"
+            programFont.size = m.top.programFontSize
+            lbl.font = programFont
             lbl.color = "#FFFFFF"
 
             timeLbl = tile.createChild("Label")
-            timeLbl.translation = [10, 50]
+            timeLbl.translation = [10, 70]
             timeLbl.width = m.SLOT_WIDTH - 20
             timeLbl.height = 25
             timeLbl.font = "font:SmallSystemFont"
@@ -194,6 +204,7 @@
             slots.push({
               tile: tile,
               bg: tileBg,
+              font: programFont,
               label: lbl,
               timeLabel: timeLbl
             })
@@ -206,6 +217,14 @@
             progGroup: progGroup,
             slots: slots
           })
+        end for
+      end sub
+
+      sub onProgramFontSizeChanged()
+        for each rowRec in m.rowPool
+          for each slotRec in rowRec.slots
+            slotRec.font.size = m.top.programFontSize
+          end for
         end for
       end sub
 
